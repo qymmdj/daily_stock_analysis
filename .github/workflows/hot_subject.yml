@@ -1,0 +1,86 @@
+name: 热点题材数据采集
+
+on:
+  # 定时触发 - 每天北京时间 15:10 和 17:00
+  schedule:
+    - cron: '10 7 * * 1-5'     # 周一到周五，UTC 7:10 = 北京时间 15:10
+    - cron: '0 9 * * 1-5'      # 周一到周五，UTC 9:00 = 北京时间 17:00
+  
+  # 手动触发
+  workflow_dispatch:
+
+# 并发控制：同一时间只运行一个采集任务
+concurrency:
+  group: hot-subject
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    # 添加超时限制，防止任务卡死
+    timeout-minutes: 10
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: 安装依赖
+        run: |
+          pip install --upgrade pip
+          pip install requests
+      
+      - name: 创建必要目录
+        run: |
+          mkdir -p data/hotsubject
+      
+      - name: 执行热点题材数据采集
+        env:
+          # Gitee 配置
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_REPO: ${{ vars.GITEE_REPO || 'qymmdj/stockdb' }}
+          GITEE_PATH: ${{ vars.GITEE_PATH || 'hotsubject' }}
+          
+          # 系统配置
+          LOG_LEVEL: INFO
+          
+        run: |
+          echo "=========================================="
+          echo "📊 热点题材数据采集"
+          echo "=========================================="
+          echo "⏰ 时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
+          echo "📁 Gitee 仓库: $GITEE_REPO"
+          echo "📂 Gitee 路径: $GITEE_PATH"
+          echo "🔑 Gitee Token: $([ -n "$GITEE_TOKEN" ] && echo '✅ 已配置' || echo '❌ 未配置')"
+          echo "=========================================="
+          echo ""
+          
+          python src/xuangutong/hot_subject.py
+      
+      - name: 上传采集数据
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hot-subject-data-${{ github.run_number }}
+          path: data/hotsubject/
+          retention-days: 30
+      
+      - name: 显示运行结果
+        if: always()
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "📊 采集完成"
+          echo "=========================================="
+          if [ -d "data/hotsubject" ] && [ "$(ls -A data/hotsubject 2>/dev/null)" ]; then
+            echo "采集的数据文件:"
+            ls -la data/hotsubject/
+          else
+            echo "⚠️ 未生成数据文件"
+          fi
+          echo "=========================================="
