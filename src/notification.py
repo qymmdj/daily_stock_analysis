@@ -14,7 +14,8 @@ A股自选股智能分析系统 - 通知层
    - 邮件 SMTP
    - Pushover（手机/桌面推送）
 """
-
+import hashlib
+import hmac
 import logging
 import json
 import smtplib
@@ -52,6 +53,7 @@ class NotificationChannel(Enum):
     PUSHPLUS = "pushplus"  # PushPlus（国内推送服务）
     CUSTOM = "custom"      # 自定义 Webhook
     DISCORD = "discord"    # Discord 机器人 (Bot)
+    ASTRBOT = "astrbot"
     UNKNOWN = "unknown"    # 未知
 
 
@@ -99,6 +101,7 @@ class ChannelDetector:
             NotificationChannel.PUSHPLUS: "PushPlus",
             NotificationChannel.CUSTOM: "自定义Webhook",
             NotificationChannel.DISCORD: "Discord机器人",
+            NotificationChannel.ASTRBOT: "ASTRBOT机器人",
             NotificationChannel.UNKNOWN: "未知渠道",
         }
         return names.get(channel, "未知渠道")
@@ -143,6 +146,7 @@ class NotificationService:
         self._telegram_config = {
             'bot_token': getattr(config, 'telegram_bot_token', None),
             'chat_id': getattr(config, 'telegram_chat_id', None),
+            'message_thread_id': getattr(config, 'telegram_message_thread_id', None),
         }
         
         # 邮件配置
@@ -170,6 +174,11 @@ class NotificationService:
             'bot_token': getattr(config, 'discord_bot_token', None),
             'channel_id': getattr(config, 'discord_main_channel_id', None),
             'webhook_url': getattr(config, 'discord_webhook_url', None),
+        }
+
+        self._astrbot_config = {
+            'astrbot_url': getattr(config, 'astrbot_url', None),
+            'astrbot_token': getattr(config, 'astrbot_token', None),
         }
         
         # 消息长度限制（字节）
@@ -228,7 +237,9 @@ class NotificationService:
         # Discord
         if self._is_discord_configured():
             channels.append(NotificationChannel.DISCORD)
-        
+        # AstrBot
+        if self._is_astrbot_configured():
+            channels.append(NotificationChannel.ASTRBOT)
         return channels
     
     def _is_telegram_configured(self) -> bool:
@@ -241,7 +252,13 @@ class NotificationService:
         bot_ok = bool(self._discord_config['bot_token'] and self._discord_config['channel_id'])
         webhook_ok = bool(self._discord_config['webhook_url'])
         return bot_ok or webhook_ok
-    
+
+    def _is_astrbot_configured(self) -> bool:
+        """检查 AstrBot 配置是否完整（支持 Bot 或 Webhook）"""
+        # 只要配置了 URL，即视为可用
+        url_ok = bool(self._astrbot_config['astrbot_url'])
+        return url_ok
+
     def _is_email_configured(self) -> bool:
         """检查邮件配置是否完整（只需邮箱和授权码）"""
         return bool(self._email_config['sender'] and self._email_config['password'])
@@ -349,10 +366,10 @@ class NotificationService:
             reverse=True
         )
         
-        # 统计信息
-        buy_count = sum(1 for r in results if r.operation_advice in ['买入', '加仓', '强烈买入'])
-        sell_count = sum(1 for r in results if r.operation_advice in ['卖出', '减仓', '强烈卖出'])
-        hold_count = sum(1 for r in results if r.operation_advice in ['持有', '观望'])
+        # 统计信息 - 使用 decision_type 字段准确统计
+        buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy')
+        sell_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'sell')
+        hold_count = sum(1 for r in results if getattr(r, 'decision_type', '') in ('hold', ''))
         avg_score = sum(r.sentiment_score for r in results) / len(results) if results else 0
         
         report_lines.extend([
@@ -555,10 +572,10 @@ class NotificationService:
         # 按评分排序（高分在前）
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
 
-        # 统计信息
-        buy_count = sum(1 for r in results if r.operation_advice in ['买入', '加仓', '强烈买入'])
-        sell_count = sum(1 for r in results if r.operation_advice in ['卖出', '减仓', '强烈卖出'])
-        hold_count = sum(1 for r in results if r.operation_advice in ['持有', '观望'])
+        # 统计信息 - 使用 decision_type 字段准确统计
+        buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy')
+        sell_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'sell')
+        hold_count = sum(1 for r in results if getattr(r, 'decision_type', '') in ('hold', ''))
 
         report_lines = [
             f"# 🎯 {report_date} 决策仪表盘",
@@ -831,10 +848,10 @@ class NotificationService:
         # 按评分排序
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
         
-        # 统计
-        buy_count = sum(1 for r in results if r.operation_advice in ['买入', '加仓', '强烈买入'])
-        sell_count = sum(1 for r in results if r.operation_advice in ['卖出', '减仓', '强烈卖出'])
-        hold_count = sum(1 for r in results if r.operation_advice in ['持有', '观望'])
+        # 统计 - 使用 decision_type 字段准确统计
+        buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy')
+        sell_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'sell')
+        hold_count = sum(1 for r in results if getattr(r, 'decision_type', '') in ('hold', ''))
         
         lines = [
             f"## 🎯 {report_date} 决策仪表盘",
@@ -964,10 +981,10 @@ class NotificationService:
         # 按评分排序
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
 
-        # 统计
-        buy_count = sum(1 for r in results if r.operation_advice in ['买入', '加仓', '强烈买入'])
-        sell_count = sum(1 for r in results if r.operation_advice in ['卖出', '减仓', '强烈卖出'])
-        hold_count = sum(1 for r in results if r.operation_advice in ['持有', '观望'])
+        # 统计 - 使用 decision_type 字段准确统计
+        buy_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'buy')
+        sell_count = sum(1 for r in results if getattr(r, 'decision_type', '') == 'sell')
+        hold_count = sum(1 for r in results if getattr(r, 'decision_type', '') in ('hold', ''))
         avg_score = sum(r.sentiment_score for r in results) / len(results) if results else 0
 
         lines = [
@@ -1889,6 +1906,7 @@ class NotificationService:
         
         bot_token = self._telegram_config['bot_token']
         chat_id = self._telegram_config['chat_id']
+        message_thread_id = self._telegram_config.get('message_thread_id')
         
         try:
             # Telegram API 端点
@@ -1899,10 +1917,10 @@ class NotificationService:
             
             if len(content) <= max_length:
                 # 单条消息发送
-                return self._send_telegram_message(api_url, chat_id, content)
+                return self._send_telegram_message(api_url, chat_id, content, message_thread_id)
             else:
                 # 分段发送长消息
-                return self._send_telegram_chunked(api_url, chat_id, content, max_length)
+                return self._send_telegram_chunked(api_url, chat_id, content, max_length, message_thread_id)
                 
         except Exception as e:
             logger.error(f"发送 Telegram 消息失败: {e}")
@@ -1910,7 +1928,7 @@ class NotificationService:
             logger.debug(traceback.format_exc())
             return False
     
-    def _send_telegram_message(self, api_url: str, chat_id: str, text: str) -> bool:
+    def _send_telegram_message(self, api_url: str, chat_id: str, text: str, message_thread_id: Optional[str] = None) -> bool:
         """发送单条 Telegram 消息"""
         # 转换 Markdown 为 Telegram 支持的格式
         # Telegram 的 Markdown 格式稍有不同，做简单处理
@@ -1922,6 +1940,9 @@ class NotificationService:
             "parse_mode": "Markdown",
             "disable_web_page_preview": True
         }
+
+        if message_thread_id:
+            payload['message_thread_id'] = message_thread_id
         
         response = requests.post(api_url, json=payload, timeout=10)
         
@@ -1952,7 +1973,7 @@ class NotificationService:
             logger.error(f"响应内容: {response.text}")
             return False
     
-    def _send_telegram_chunked(self, api_url: str, chat_id: str, content: str, max_length: int) -> bool:
+    def _send_telegram_chunked(self, api_url: str, chat_id: str, content: str, max_length: int, message_thread_id: Optional[str] = None) -> bool:
         """分段发送长 Telegram 消息"""
         # 按段落分割
         sections = content.split("\n---\n")
@@ -1970,7 +1991,7 @@ class NotificationService:
                 if current_chunk:
                     chunk_content = "\n---\n".join(current_chunk)
                     logger.info(f"发送 Telegram 消息块 {chunk_index}...")
-                    if not self._send_telegram_message(api_url, chat_id, chunk_content):
+                    if not self._send_telegram_message(api_url, chat_id, chunk_content, message_thread_id):
                         all_success = False
                     chunk_index += 1
                 
@@ -1984,10 +2005,10 @@ class NotificationService:
         # 发送最后一块
         if current_chunk:
             chunk_content = "\n---\n".join(current_chunk)
-            logger.info(f"发送 Telegram 消息块 {chunk_index}（最后）...")
-            if not self._send_telegram_message(api_url, chat_id, chunk_content):
+            logger.info(f"发送 Telegram 消息块 {chunk_index}...")
+            if not self._send_telegram_message(api_url, chat_id, chunk_content, message_thread_id):
                 all_success = False
-        
+                
         return all_success
     
     def _convert_to_telegram_markdown(self, text: str) -> str:
@@ -2686,6 +2707,23 @@ class NotificationService:
         
         logger.warning("Discord 配置不完整，跳过推送")
         return False
+
+
+    def send_to_astrbot(self, content: str) -> bool:
+        """
+        推送消息到 AstrBot（通过适配器支持）
+
+        Args:
+            content: Markdown 格式的消息内容
+
+        Returns:
+            是否发送成功
+        """
+        if self._astrbot_config['astrbot_url']:
+            return self._send_astrbot(content)
+
+        logger.warning("AstrBot 配置不完整，跳过推送")
+        return False
     
     def _send_discord_webhook(self, content: str) -> bool:
         """
@@ -2754,6 +2792,53 @@ class NotificationService:
         except Exception as e:
             logger.error(f"Discord Bot 发送异常: {e}")
             return False
+
+    def _send_astrbot(self, content: str) -> bool:
+        import time
+        """
+        使用 Bot API 发送消息到 AstrBot
+
+        Args:
+            content: Markdown 格式的消息内容
+
+        Returns:
+            是否发送成功
+        """
+
+        html_content = self._markdown_to_html(content)
+
+        try:
+            payload = {
+                'content': html_content
+            }
+            signature =  ""
+            timestamp = str(int(time.time()))
+            if self._astrbot_config['astrbot_token']:
+                """计算请求签名"""
+                payload_json = json.dumps(payload, sort_keys=True)
+                sign_data = f"{timestamp}.{payload_json}".encode('utf-8')
+                key = self._astrbot_config['astrbot_token']
+                signature = hmac.new(
+                    key.encode('utf-8'),
+                    sign_data,
+                    hashlib.sha256
+                ).hexdigest()
+            url = self._astrbot_config['astrbot_url']
+            response = requests.post(url, json=payload, timeout=10,headers={
+                        "Content-Type": "application/json",
+                        "X-Signature": signature,
+                        "X-Timestamp": timestamp
+                    })
+
+            if response.status_code == 200:
+                logger.info("AstrBot 消息发送成功")
+                return True
+            else:
+                logger.error(f"AstrBot 发送失败: {response.status_code} {response.text}")
+                return False
+        except Exception as e:
+            logger.error(f"AstrBot 发送异常: {e}")
+            return False
     
     def send(self, content: str) -> bool:
         """
@@ -2801,6 +2886,8 @@ class NotificationService:
                     result = self.send_to_custom(content)
                 elif channel == NotificationChannel.DISCORD:
                     result = self.send_to_discord(content)
+                elif channel == NotificationChannel.ASTRBOT:
+                    result = self.send_to_astrbot(content)
                 else:
                     logger.warning(f"不支持的通知渠道: {channel}")
                     result = False
