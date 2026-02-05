@@ -60,7 +60,7 @@ jobs:
           echo "=========================================="
           echo ""
           
-          python src/xuangutong/hot_subject.py
+          python src/qym/xuangutong/hot_subject.py
       
       - name: 上传采集数据
         uses: actions/upload-artifact@v4
