@@ -1,4 +1,4 @@
-name: MA Trend Analysis
+name: 均线回踩选股
 
 on:
   schedule:
