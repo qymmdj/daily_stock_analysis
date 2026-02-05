@@ -206,7 +206,7 @@ def generate_markdown_report(results: List[Dict]) -> str:
 
 ## 详细分析结果
 
-| 板块 | 代码 | 名称 | 10均次数 | 10均上涨率 | 20均次数 | 20均上涨率 | 放量10次 | 放量10率 | 放量20次 | 放量20率 | 今日靠近 |
+| 板块 | 代码 | 名称 | 10均次数 | 10均上涨率 | 20均次数 | 20均上涨率 | 放量10次 | 10日放量 | 20日放量 | 20日放量上涨概率 | 今日靠近 |
 |------|------|------|--------|----------|--------|----------|--------|--------|--------|--------|--------|
 """
     
@@ -270,6 +270,10 @@ if __name__ == "__main__":
         
     # 或者执行批量分析（需要配置Gitee客户端）
      batch_results = batch_analyze_from_gitee()
+     
+     # 排序结果：先按板块，再按20均上涨率，最后按10均上涨率降序排序
+     batch_results.sort(key=lambda x: (x['plate'], -x['near_20_up_prob'], -x['near_10_up_prob']))
+     
      output_batch_results(batch_results)
      
      # 生成并上传Markdown报告到Gitee
