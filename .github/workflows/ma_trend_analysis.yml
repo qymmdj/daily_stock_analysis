@@ -1,0 +1,69 @@
+name: MA Trend Analysis
+
+on:
+  schedule:
+    # 每天上午10点运行（北京时间，对应UTC时间2点）
+    - cron: '20 6 * * *'
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    
+    env:
+      PYTHON_VERSION: '3.9'
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+      GITEE_REPO: ${{ secrets.GITEE_REPO }}
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        if [ -f requirements.txt ]; then
+          pip install -r requirements.txt
+        else
+          pip install requests pandas numpy akshare tushare-pro baostock pytdx yfinance efinance
+        fi
+        
+    - name: Run MA trend analysis
+      run: |
+        python -c "
+        import sys
+        import os
+        sys.path.insert(0, os.path.abspath('.'))
+        
+        from src.qym.trend_analysis.main_analyzer import batch_analyze_from_gitee, generate_markdown_report, upload_report_to_gitee, output_batch_results
+        
+        print('开始执行MA趋势分析...')
+        batch_results = batch_analyze_from_gitee()
+        output_batch_results(batch_results)
+        
+        # 生成并上传Markdown报告到Gitee
+        if batch_results:
+            markdown_report = generate_markdown_report(batch_results)
+            upload_report_to_gitee(markdown_report)
+            print('MA趋势分析完成并已上传报告!')
+        else:
+            print('没有分析结果可生成报告')
+        "
+      env:
+        GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        GITEE_REPO: ${{ secrets.GITEE_REPO }}
+        
+    - name: Archive analysis results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: ma-trend-analysis-results
+        path: |
+          *.log
+          *.txt
+          !.git/**

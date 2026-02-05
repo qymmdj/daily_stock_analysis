@@ -228,7 +228,7 @@ class GiteeClient:
     def get_file_content(self, remote_path: str, branch: str = "master") -> Optional[str]:
         """
         获取远程文件内容
-        
+            
         Args:
             remote_path: 远程文件路径
             branch: 分支名称
@@ -239,7 +239,7 @@ class GiteeClient:
         try:
             url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}?access_token={self.token}&ref={branch}"
             response = requests.get(url, timeout=30)
-            
+                
             if response.status_code == 200:
                 data = response.json()
                 if 'content' in data:
@@ -249,7 +249,48 @@ class GiteeClient:
         except Exception as e:
             print(f"❌ 获取文件内容失败: {e}")
             return None
-
+    
+    def download_file(self, remote_path: str, repo: str = None, branch: str = "master") -> Optional[str]:
+        """
+        下载远程文件内容
+            
+        Args:
+            remote_path: 远程文件路径
+            repo: 仓库名称，如果不提供则使用默认仓库
+            branch: 分支名称
+            
+        Returns:
+            Optional[str]: 文件内容，如果失败则返回 None
+        """
+        try:
+            # 临时切换仓库（如果提供了新的仓库名称）
+            original_repo = self.repo
+            if repo:
+                self.repo = repo
+                
+            url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}?access_token={self.token}&ref={branch}"
+            response = requests.get(url, timeout=30)
+                
+            # 恢复原来的仓库设置
+            self.repo = original_repo
+                
+            if response.status_code == 200:
+                data = response.json()
+                if 'content' in data:
+                    content = base64.b64decode(data['content']).decode('utf-8')
+                    return content
+                else:
+                    print(f"❌ 响应中没有文件内容: {remote_path}")
+                    return None
+            else:
+                print(f"❌ 下载失败，状态码: {response.status_code}, URL: {url}")
+                return None
+        except Exception as e:
+            print(f"❌ 下载文件失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
 
 def upload_to_gitee(file_path: str, file_name: str, remote_path: str = "hotsubject", repo: str = "qymmdj/stockdb", token: str = None) -> bool:
     """

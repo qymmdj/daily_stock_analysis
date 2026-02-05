@@ -39,7 +39,6 @@ class TrendAnalyzer:
         # 直到MA10 < MA20,则返回这一天的下标
         start_analysis_index = self._find_start_index(sorted_data)
         
-        print(f"股票 {stock_code} 的分析起始位置是第 {sorted_data[start_analysis_index]} 天")
         if start_analysis_index is None:
             print(f"股票 {stock_code} 无法确定分析起始位置")
             return None
@@ -75,8 +74,8 @@ class TrendAnalyzer:
             return None
 
         # 分析接近均线的交易日
-        near_ma_dates = []  # 存储接近均线的日期
-        strong_signals = []  # 存储满足放量大涨条件的日期
+        near_10 = []  # 存储接近10日均线的日期
+        near_20 = []  # 存储接近20日均线的日期
 
         for i in range(1, len(analysis_data)):  # 从第2天开始，因为需要前一天的数据
             current_data = analysis_data[i]
@@ -146,137 +145,33 @@ class TrendAnalyzer:
                     if next_close_px and next_open_px and next_open_px != 0:
                         next_day_change_pct = ((next_close_px - next_open_px) / next_open_px) * 100
                 
-                near_ma_dates.append({
-                    'date': current_data['date'],
-                    'ma_type': closest_ma_type,
-                    'price': close_px,
-                    'ma_value': closest_ma_value,
-                    'volume': volume,
-                    'prev_volume': prev_volume,
-                    'change_pct': change_pct,
-                    'next_day_change_pct': next_day_change_pct  # 添加第二天的涨幅
-                })
-
                 # 检查是否满足放量大涨条件（成交量必须是昨日的1.2倍以上）
-                if volume >= prev_volume * 1.2 and self._is_strong_increase(change_pct, stock_code):
-                    # 计算第二天的涨幅
-                    next_day_change_pct = None
-                    if i + 1 < len(analysis_data):  # 确保有下一天的数据
-                        next_data = analysis_data[i + 1]
-                        next_close_px = next_data.get('close_px')
-                        next_open_px = next_data.get('open_px')
-                        
-                        if next_close_px and next_open_px and next_open_px != 0:
-                            next_day_change_pct = ((next_close_px - next_open_px) / next_open_px) * 100
-                    
-                    strong_signals.append({
-                        'date': current_data['date'],
-                        'ma_type': closest_ma_type,
-                        'change_pct': change_pct,
-                        'volume': volume,
-                        'prev_volume': prev_volume,
-                        'next_day_change_pct': next_day_change_pct  # 添加第二天的涨幅
-                    })
+                is_large_volumn = volume >= prev_volume * 1.2 and self._is_strong_increase(change_pct, stock_code)
+                
+                # 根据均线类型添加到相应列表
+                day_entry = {
+                    'day': current_data['date'],
+                    'rate': round(change_pct, 2),
+                    'next_rate': round(next_day_change_pct, 2) if next_day_change_pct is not None else None,
+                    'is_large_volumn': is_large_volumn
+                }
+                
+                if closest_ma_type == '10日均线':
+                    near_10.append(day_entry)
+                elif closest_ma_type == '20日均线':
+                    near_20.append(day_entry)
 
-        # 过滤连续的日期，只保留每组连续日期中最接近的一条
-        filtered_near_ma_dates = self._filter_consecutive_dates(near_ma_dates)
-        filtered_strong_signals = self._filter_consecutive_dates_strong_signals(strong_signals)
-
-        # 计算第二天上涨的次数
-        near_ma_next_day_up_count = sum(1 for item in filtered_near_ma_dates if item['next_day_change_pct'] is not None and item['next_day_change_pct'] > 0)
-        strong_signal_next_day_up_count = sum(1 for item in filtered_strong_signals if item['next_day_change_pct'] is not None and item['next_day_change_pct'] > 0)
-
+        # 提取股票代码部分（去掉交易所后缀）
+        stock_code_clean = stock_code.split('.')[0]
+        
         # 构建结果
         result = {
-            'stock_code': stock_code,
-            'near_ma_count': len(filtered_near_ma_dates),  # 接近均线的总次数（过滤后）
-            'near_ma_next_day_up_count': near_ma_next_day_up_count,  # 接近均线第二天上涨次数
-            'strong_signal_count': len(filtered_strong_signals),  # 满足放量大涨的次数（过滤后）
-            'strong_signal_next_day_up_count': strong_signal_next_day_up_count,  # 满足放量大涨第二天上涨次数
-            'near_ma_dates': [item['date'] + '(' + item['ma_type'] + ')' for item in filtered_near_ma_dates],
-            'strong_signal_dates': [item['date'] + '(' + item['ma_type'] + ')' for item in filtered_strong_signals],
-            'strong_signals_with_next_day_change': [
-                {
-                    'date': signal['date'],
-                    'ma_type': signal['ma_type'],
-                    'signal_day_change': signal['change_pct'],
-                    'next_day_change': signal['next_day_change_pct']
-                } 
-                for signal in filtered_strong_signals
-            ]
+            'code': stock_code_clean,
+            'near_10': near_10,
+            'near_20': near_20
         }
 
         return result
-
-    def _filter_consecutive_dates(self, dates_list: List[Dict]) -> List[Dict]:
-        """
-        过滤连续的日期，只保留每组连续日期中最接近的一条
-        """
-        if not dates_list:
-            return []
-
-        # 按日期排序（最新的在前面）
-        sorted_dates = sorted(dates_list, key=lambda x: datetime.strptime(x['date'], '%Y-%m-%d'), reverse=True)
-        
-        filtered_dates = []
-        i = 0
-        while i < len(sorted_dates):
-            current = sorted_dates[i]
-            filtered_dates.append(current)
-            
-            # 查找连续的日期
-            j = i + 1
-            while j < len(sorted_dates):
-                current_date = datetime.strptime(current['date'], '%Y-%m-%d')
-                next_date = datetime.strptime(sorted_dates[j]['date'], '%Y-%m-%d')
-                
-                # 检查是否为连续日期，且均线类型相同
-                if (current_date - next_date).days == 1 and current['ma_type'] == sorted_dates[j]['ma_type']:
-                    # 这是连续的日期，跳过
-                    j += 1
-                else:
-                    # 不再是连续日期，跳出循环
-                    break
-            
-            # 更新i的位置
-            i = j
-
-        return filtered_dates
-
-    def _filter_consecutive_dates_strong_signals(self, signals_list: List[Dict]) -> List[Dict]:
-        """
-        过滤连续的强信号日期，只保留每组连续日期中最接近的一条
-        """
-        if not signals_list:
-            return []
-
-        # 按日期排序（最新的在前面）
-        sorted_signals = sorted(signals_list, key=lambda x: datetime.strptime(x['date'], '%Y-%m-%d'), reverse=True)
-        
-        filtered_signals = []
-        i = 0
-        while i < len(sorted_signals):
-            current = sorted_signals[i]
-            filtered_signals.append(current)
-            
-            # 查找连续的日期
-            j = i + 1
-            while j < len(sorted_signals):
-                current_date = datetime.strptime(current['date'], '%Y-%m-%d')
-                next_date = datetime.strptime(sorted_signals[j]['date'], '%Y-%m-%d')
-                
-                # 检查是否为连续日期，且均线类型相同
-                if (current_date - next_date).days == 1 and current['ma_type'] == sorted_signals[j]['ma_type']:
-                    # 这是连续的日期，跳过
-                    j += 1
-                else:
-                    # 不再是连续日期，跳出循环
-                    break
-            
-            # 更新i的位置
-            i = j
-
-        return filtered_signals
 
     def _find_start_index(self, sorted_data: List[Dict]) -> Optional[int]:
         """
