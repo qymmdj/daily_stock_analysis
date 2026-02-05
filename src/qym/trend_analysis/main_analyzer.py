@@ -251,7 +251,7 @@ def upload_report_to_gitee(markdown_content: str):
     import datetime
     current_date = datetime.datetime.now().strftime('%Y-%m-%d')
     
-    remote_path = f"dayanalysis/MA_TREND_{current_date}.md"
+    remote_path = f"xg/MA_TREND_{current_date}.md"
     message = f"更新MA趋势分析报告 {current_date}"
     
     success = client.upload_content(markdown_content, remote_path, message=message)

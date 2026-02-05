@@ -171,8 +171,36 @@ class GiteeClient:
                 "Content-Type": "application/json"
             }
             
-            # 发送请求
-            response = requests.put(upload_url, json=data, headers=headers, timeout=60)
+            # 首先尝试获取文件信息，如果存在则获取SHA值用于更新
+            file_info_url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}?access_token={self.token}&ref={branch}"
+            file_response = requests.get(file_info_url)
+                        
+            # 根据文件是否存在决定使用哪种方法
+            if file_response.status_code == 200:
+                # 文件已存在，获取SHA值用于更新
+                file_info_response = file_response.json()
+                # 检查返回的是单个文件还是文件列表
+                sha = ''
+                if isinstance(file_info_response, dict):
+                    # 单个文件
+                    sha = file_info_response.get('sha', '')
+                elif isinstance(file_info_response, list) and len(file_info_response) > 0:
+                    # 文件列表，查找匹配的文件
+                    for item in file_info_response:
+                        if item.get('name') == os.path.basename(remote_path):
+                            sha = item.get('sha', '')
+                            break
+                            
+                if sha:
+                    data['sha'] = sha
+                    # 使用PUT请求更新现有文件
+                    response = requests.put(upload_url, json=data, headers=headers, timeout=60)
+                else:
+                    # 如果没有获取到SHA但文件响应是200，可能有其他情况，使用POST创建
+                    response = requests.post(upload_url, json=data, headers=headers, timeout=60)
+            else:
+                # 文件不存在，使用POST创建新文件
+                response = requests.post(upload_url, json=data, headers=headers, timeout=60)
             
             # 打印详细的响应信息以便调试
             print(f"📡 Gitee API 响应状态码: {response.status_code}")
