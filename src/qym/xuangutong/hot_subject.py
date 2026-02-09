@@ -102,7 +102,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 try:
     from ..gitee_client import upload_to_gitee
 except ImportError:
-    from src.gitee_client import upload_to_gitee
+    from gitee_client import upload_to_gitee
 
 
 def main():
