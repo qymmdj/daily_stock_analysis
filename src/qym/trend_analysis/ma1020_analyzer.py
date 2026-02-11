@@ -4,6 +4,9 @@
 """
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime, timedelta
+import pandas as pd
+
+from src.qym.trend_analysis.golden_analyzer import PatternAnalyzer
 
 
 class TrendAnalyzer:
@@ -11,6 +14,33 @@ class TrendAnalyzer:
 
     def __init__(self):
         pass
+
+    def _convert_to_dataframe(self, kline_data: List[Dict]) -> pd.DataFrame:
+        """
+        将K线数据转换为DataFrame格式，用于黄金坑分析
+        """
+        if not kline_data:
+            return pd.DataFrame()
+        
+        # 转换数据格式
+        data = []
+        for item in kline_data:
+            data.append({
+                'date': item.get('date'),
+                'open': item.get('open_px'),
+                'high': item.get('high_px'),
+                'low': item.get('low_px'),
+                'close': item.get('close_px'),
+                'volume': item.get('turnover_volume')
+            })
+        
+        df = pd.DataFrame(data)
+        # 确保数据类型正确
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        return df
 
     def analyze_trend_support_point(self, stock_code: str, kline_data: List[Dict]) -> Optional[Dict]:
         """
@@ -21,6 +51,7 @@ class TrendAnalyzer:
         4. 判断股价每次最接近10或20日均线的某一天时，成交量是否大于前一日，且涨幅较大
         5. 只统计出现这种情况的次数
         6. 输出接近均线的总次数和满足放量大涨条件的次数
+        7. 分析是否存在黄金坑买点信号
 
         Args:
             stock_code: 股票代码
@@ -161,6 +192,27 @@ class TrendAnalyzer:
                 elif closest_ma_type == '20日均线':
                     near_20.append(day_entry)
 
+        # 黄金坑分析
+        golden_pit_buy_signal = False
+        golden_pit_confidence = 0
+        
+        # 转换数据为DataFrame格式进行黄金坑分析
+        df = self._convert_to_dataframe(kline_data)
+        if not df.empty:
+            analyzer = PatternAnalyzer()
+            
+            # 检测黄金坑
+            golden_result = analyzer.detect_golden_pit(df, stock_code)
+            if golden_result:
+                golden_pit_buy_signal = golden_result.buy_signal
+                golden_pit_confidence = golden_result.confidence
+            else:
+                # 检测恐慌性洗盘
+                panic_result = analyzer.detect_panic_wash(df, stock_code)
+                if panic_result:
+                    golden_pit_buy_signal = panic_result.buy_signal
+                    golden_pit_confidence = panic_result.confidence
+
         # 提取股票代码部分（去掉交易所后缀）
         stock_code_clean = stock_code.split('.')[0]
         
@@ -168,7 +220,9 @@ class TrendAnalyzer:
         result = {
             'code': stock_code_clean,
             'near_10': near_10,
-            'near_20': near_20
+            'near_20': near_20,
+            'golden_pit_buy_signal': golden_pit_buy_signal,
+            'golden_pit_confidence': golden_pit_confidence
         }
 
         return result

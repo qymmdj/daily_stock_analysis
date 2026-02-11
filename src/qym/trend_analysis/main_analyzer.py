@@ -13,7 +13,7 @@ dirname = os.path.dirname(__file__)
 sys.path.insert(0, os.path.join(dirname, '../../../'))
 
 from src.qym.trend_analysis.kline_fetcher import KLineFetcher
-from src.qym.trend_analysis.trend_analyzer import TrendAnalyzer
+from src.qym.trend_analysis.ma1020_analyzer import TrendAnalyzer
 from src.gitee_client import GiteeClient
 
 
@@ -40,6 +40,8 @@ def analyze_single_stock(stock_code: str) -> Optional[Dict]:
         print(f"接近20日均线记录数: {len(result['near_20'])}")
         print(f"接近10日均线详情: {result['near_10']}")
         print(f"接近20日均线详情: {result['near_20']}")
+        print(f"黄金坑买点信号: {'是' if result.get('golden_pit_buy_signal', False) else '否'}")
+        print(f"黄金坑置信度: {result.get('golden_pit_confidence', 0):.2f}")
 
     return result
 
@@ -160,7 +162,9 @@ def batch_analyze_from_gitee() -> List[Dict]:
                 'large_vol_10_up_prob': round(large_vol_10_up_prob * 100, 2),  # 10日均线放量大涨第二天上涨概率
                 'large_vol_20_count': large_vol_20_count,  # 20日均线放量大涨次数
                 'large_vol_20_up_prob': round(large_vol_20_up_prob * 100, 2),  # 20日均线放量大涨第二天上涨概率
-                'today_near': today_near  # 今天靠近10日还是20日
+                'today_near': today_near,  # 今天靠近10日还是20日
+                'golden_pit_buy_signal': trend_result.get('golden_pit_buy_signal', False),  # 黄金坑买点信号
+                'golden_pit_confidence': round(trend_result.get('golden_pit_confidence', 0), 2)  # 黄金坑置信度
             }
             results.append(result)
         
@@ -175,14 +179,15 @@ def batch_analyze_from_gitee() -> List[Dict]:
 def output_batch_results(results: List[Dict]):
     """输出批量分析结果"""
     print("\n=== 批量分析结果 ===")
-    print(f"{'板块':<15} {'代码':<10} {'名称':<10} {'10均次数':<8} {'10均上涨率':<10} {'20均次数':<8} {'20均上涨率':<10} {'放量10次':<8} {'放量10率':<8} {'放量20次':<8} {'放量20率':<8} {'今日靠近':<8}")
-    print("-" * 140)
+    print(f"{'板块':<15} {'代码':<10} {'名称':<10} {'10均次数':<8} {'10均上涨率':<10} {'20均次数':<8} {'20均上涨率':<10} {'放量10次':<8} {'放量10率':<8} {'放量20次':<8} {'放量20率':<8} {'今日靠近':<8} {'黄金坑买点':<8} {'黄金坑置信度':<10}")
+    print("-" * 180)
     
     for result in results:
         print(f"{result['plate']:<15} {result['stock_code']:<10} {result['stock_name']:<10} "
               f"{result['near_10_count']:<8} {result['near_10_up_prob']:<10} {result['near_20_count']:<8} "
               f"{result['near_20_up_prob']:<10} {result['large_vol_10_count']:<8} {result['large_vol_10_up_prob']:<8} "
-              f"{result['large_vol_20_count']:<8} {result['large_vol_20_up_prob']:<8} {result['today_near']:<8}")
+              f"{result['large_vol_20_count']:<8} {result['large_vol_20_up_prob']:<8} {result['today_near']:<8} "
+              f"{'是' if result.get('golden_pit_buy_signal', False) else '否':<8} {result.get('golden_pit_confidence', 0):<10.2f}")
 
 
 def generate_markdown_report(results: List[Dict]) -> str:
@@ -206,12 +211,12 @@ def generate_markdown_report(results: List[Dict]) -> str:
 
 ## 详细分析结果
 
-| 板块 | 代码 | 名称 | 10均次数 | 10均上涨率 | 20均次数 | 20均上涨率 | 放量10次 | 10日放量 | 20日放量 | 20日放量上涨概率 | 今日靠近 |
-|------|------|------|--------|----------|--------|----------|--------|--------|--------|--------|--------|
+| 板块 | 代码 | 名称 | 10均次数 | 10均上涨率 | 20均次数 | 20均上涨率 | 放量10次 | 10日放量 | 20日放量 | 20日放量上涨概率 | 今日靠近 | 黄金坑买点 | 黄金坑置信度 |
+|------|------|------|--------|----------|--------|----------|--------|--------|--------|--------|--------|----------|------------|
 """
     
     for result in results:
-        markdown_content += f"| {result['plate']} | {result['stock_code']} | {result['stock_name']} | {result['near_10_count']} | {result['near_10_up_prob']}% | {result['near_20_count']} | {result['near_20_up_prob']}% | {result['large_vol_10_count']} | {result['large_vol_10_up_prob']}% | {result['large_vol_20_count']} | {result['large_vol_20_up_prob']}% | {result['today_near']} |\n"
+        markdown_content += f"| {result['plate']} | {result['stock_code']} | {result['stock_name']} | {result['near_10_count']} | {result['near_10_up_prob']}% | {result['near_20_count']} | {result['near_20_up_prob']}% | {result['large_vol_10_count']} | {result['large_vol_10_up_prob']}% | {result['large_vol_20_count']} | {result['large_vol_20_up_prob']}% | {result['today_near']} | {'是' if result.get('golden_pit_buy_signal', False) else '否'} | {result.get('golden_pit_confidence', 0):.2f} |\n"
     
     # 添加统计摘要
     if results:
@@ -233,6 +238,8 @@ def generate_markdown_report(results: List[Dict]) -> str:
 4. **靠近20日均线次数第二天上涨概率**: 接近20日均线后第二天上涨的概率
 5. **放量大涨次数**: 成交量放大且涨幅较大的次数
 6. **放量大涨第二天上涨概率**: 放量大涨后第二天上涨的概率
+7. **黄金坑买点**: 是否出现黄金坑形态的买点信号
+8. **黄金坑置信度**: 黄金坑形态识别的置信度评分 (0-100)
 
 > 注意: 本报告基于趋势买点分析算法生成，投资决策需谨慎参考。
 """
