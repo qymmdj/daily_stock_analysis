@@ -2,11 +2,16 @@
 趋势买点分析器
 根据趋势买点分析.md需求实现（更新版）
 """
+import sys
+import os
+# 添加项目根目录到Python路径
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
+
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime, timedelta
 import pandas as pd
 
-from src.qym.trend_analysis.golden_analyzer import PatternAnalyzer
+from qym.trend_analysis.golden_analyzer import PatternAnalyzer
 
 
 class TrendAnalyzer:

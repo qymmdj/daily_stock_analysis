@@ -10,11 +10,11 @@ from datetime import datetime, timedelta
 
 # 添加项目根目录到路径中
 dirname = os.path.dirname(__file__)
-sys.path.insert(0, os.path.join(dirname, '../../../'))
+sys.path.insert(0, os.path.abspath(os.path.join(dirname, '../../../')))
 
-from src.qym.trend_analysis.kline_fetcher import KLineFetcher
-from src.qym.trend_analysis.ma1020_analyzer import TrendAnalyzer
-from src.gitee_client import GiteeClient
+from qym.trend_analysis.kline_fetcher import KLineFetcher
+from qym.trend_analysis.ma1020_analyzer import TrendAnalyzer
+from gitee_client import GiteeClient
 
 
 def analyze_single_stock(stock_code: str) -> Optional[Dict]:
