@@ -11,7 +11,7 @@ from typing import Dict, List, Tuple, Optional
 from datetime import datetime, timedelta
 import pandas as pd
 
-from qym.trend_analysis.golden_analyzer import PatternAnalyzer
+from src.qym.trend_analysis.golden_analyzer import PatternAnalyzer
 
 
 class TrendAnalyzer:
