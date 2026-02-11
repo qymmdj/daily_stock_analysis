@@ -52,7 +52,7 @@ def batch_analyze_from_gitee() -> List[Dict]:
     
     # 计算4日前和10日后的时间
     four_days_ago = datetime.now() - timedelta(days=4)
-    ten_days_later = datetime.now() + timedelta(days=10)
+    ten_days_later = datetime.now() + timedelta(days=15)
     
     # 生成日期列表
     date_range = []
