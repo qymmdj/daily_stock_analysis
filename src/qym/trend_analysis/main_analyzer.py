@@ -4,14 +4,14 @@
 """
 import os
 import sys
+
+# 添加src目录到Python路径
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
 from typing import Dict, Optional, List
 import json
 from datetime import datetime, timedelta
-
-# 添加项目根目录到路径中
-dirname = os.path.dirname(__file__)
-sys.path.insert(0, os.path.abspath(os.path.join(dirname, '../../../')))
-
+ 
 from qym.trend_analysis.kline_fetcher import KLineFetcher
 from qym.trend_analysis.ma1020_analyzer import TrendAnalyzer
 from gitee_client import GiteeClient
