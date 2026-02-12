@@ -59,7 +59,7 @@ jobs:
           echo "=========================================="
           echo ""
           
-          python src/qym/trend_analysis/main_golden_pit_scanner.py
+          python src/qym/trend_analysis/main_golden_pit_scanner.py --limitup sources/stock_limitup.csv
       
       - name: 上传分析结果
         uses: actions/upload-artifact@v4

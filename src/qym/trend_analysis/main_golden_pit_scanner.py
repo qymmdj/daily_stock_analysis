@@ -446,6 +446,8 @@ def main():
     
     # 加载股票列表
     scanner.load_stock_list(args.csv)
+
+    print(f"已加载 {len(scanner.stock_list)} 只股票")
     
     # 加载涨停数据
     scanner.load_limitup_data(args.limitup)
