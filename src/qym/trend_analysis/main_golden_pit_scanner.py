@@ -22,7 +22,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 
 from qym.trend_analysis.kline_fetcher import KLineFetcher
 from qym.trend_analysis.golden_analyzer import PatternAnalyzer, PatternResult, PatternType, PatternStage
-from src.gitee_client import GiteeClient
+from gitee_client import GiteeClient
 import pandas as pd
 import numpy as np
 
@@ -394,13 +394,19 @@ class GoldenPitScanner:
             report: 报告内容
             filename: 文件名
         """
+        # 确保data/trend_analysis目录存在
+        os.makedirs('data/trend_analysis', exist_ok=True)
+        
         if not filename:
             filename = f"golden_pit_scan_report_{datetime.now().strftime('%Y%m%d')}.md"
         
+        # 保存到data/trend_analysis目录
+        filepath = os.path.join('data/trend_analysis', filename)
+        
         try:
-            with open(filename, 'w', encoding='utf-8') as f:
+            with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(report)
-            print(f"\n报告已保存到: {filename}")
+            print(f"\n报告已保存到: {filepath}")
         except Exception as e:
             print(f"保存报告失败: {str(e)}")
     

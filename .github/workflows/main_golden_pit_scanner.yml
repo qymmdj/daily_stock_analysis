@@ -1,0 +1,85 @@
+name: 黄金坑买点计算
+
+on:
+  # 定时触发
+  schedule:
+    - cron: '35 7 * * *'  # UTC 时间，对应北京时间 14:35
+  # 手动触发
+  workflow_dispatch:
+
+# 并发控制：同一时间只运行一个分析任务
+concurrency:
+  group: golden-trend-analysis
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    # 增加超时限制，批量分析可能需要更长时间
+    timeout-minutes: 60
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: 安装依赖
+        run: |
+          pip install --upgrade pip
+          echo "正在安装依赖..."
+          pip install -r requirements.txt
+      
+      - name: 创建必要目录
+        run: |
+          mkdir -p data/trend_analysis
+      
+      - name: 执行黄金坑买点分析
+        env:
+          # Gitee 配置
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_REPO: ${{ vars.GITEE_REPO || 'qymmdj/stockdb' }}
+          GITEE_PATH: ${{ vars.GITEE_PATH || 'dayanalysis' }}
+          
+          # 系统配置
+          LOG_LEVEL: INFO
+          
+        run: |
+          echo "=========================================="
+          echo "📊 黄金坑买点分析"
+          echo "=========================================="
+          echo "⏰ 时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
+          echo "📁 Gitee 仓库: $GITEE_REPO"
+          echo "📂 Gitee 路径: $GITEE_PATH"
+          echo "🔑 Gitee Token: $([ -n "$GITEE_TOKEN" ] && echo '✅ 已配置' || echo '❌ 未配置')"
+          echo "=========================================="
+          echo ""
+          
+          python -m qym.trend_analysis.main_golden_pit_scanner
+      
+      - name: 上传分析结果
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ma-trend-analysis-results-${{ github.run_number }}
+          path: data/trend_analysis/
+          retention-days: 30
+      
+      - name: 显示运行结果
+        if: always()
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "📊 分析完成"
+          echo "=========================================="
+          if [ -d "data/trend_analysis" ] && [ "$(ls -A data/trend_analysis 2>/dev/null)" ]; then
+            echo "分析结果文件:"
+            ls -la data/trend_analysis/
+          else
+            echo "⚠️ 未生成分析结果文件"
+          fi
+          echo "=========================================="
