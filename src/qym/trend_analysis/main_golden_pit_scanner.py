@@ -39,10 +39,10 @@ class GoldenPitScanner:
     
     def load_stock_list(self, csv_file: str) -> List[Dict]:
         """
-        加载股票列表
+        从涨停数据文件加载股票列表
         
         Args:
-            csv_file: 股票CSV文件路径
+            csv_file: 涨停CSV文件路径
             
         Returns:
             股票信息列表
@@ -51,17 +51,21 @@ class GoldenPitScanner:
         
         try:
             with open(csv_file, 'r', encoding='utf-8') as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    if len(row) >= 3:
+                lines = f.readlines()
+                
+                # 跳过表头
+                for line in lines[1:]:
+                    # 分割行数据（处理空格或制表符分隔）
+                    parts = line.strip().split()
+                    if len(parts) >= 4:
                         stock_info = {
-                            'code': row[0],
-                            'name': row[1],
-                            'province': row[2]
+                            'code': parts[1],
+                            'name': parts[2],
+                            'province': '未知'  # 从涨停数据中无法获取省份信息
                         }
                         stock_list.append(stock_info)
             
-            print(f"成功加载 {len(stock_list)} 只股票")
+            print(f"成功从涨停数据加载 {len(stock_list)} 只股票")
             self.stock_list = stock_list
             return stock_list
             
@@ -83,12 +87,16 @@ class GoldenPitScanner:
         
         try:
             with open(csv_file, 'r', encoding='utf-8') as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    if len(row) >= 4:
-                        stock_code = row[1]
-                        limitup_count = row[0]
-                        sector = row[3]
+                lines = f.readlines()
+                
+                # 跳过表头
+                for line in lines[1:]:
+                    # 分割行数据（处理空格或制表符分隔）
+                    parts = line.strip().split()
+                    if len(parts) >= 4:
+                        stock_code = parts[1]
+                        limitup_count = parts[0]
+                        sector = parts[3]
                         try:
                             limitup_data[stock_code] = {
                                 'count': int(limitup_count),
@@ -434,7 +442,6 @@ class GoldenPitScanner:
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(description='黄金坑买点分析程序')
-    parser.add_argument('--csv', type=str, default='sources/stock.csv', help='股票CSV文件路径')
     parser.add_argument('--limitup', type=str, default='sources/stock_limitup.csv', help='涨停CSV文件路径')
     parser.add_argument('--days', type=int, default=180, help='分析天数，默认180天')
     parser.add_argument('--max-stocks', type=int, default=None, help='最大分析股票数')
@@ -444,10 +451,8 @@ def main():
     
     scanner = GoldenPitScanner()
     
-    # 加载股票列表
-    scanner.load_stock_list(args.csv)
-
-    print(f"已加载 {len(scanner.stock_list)} 只股票")
+    # 从涨停数据文件加载股票列表
+    scanner.load_stock_list(args.limitup)
     
     # 加载涨停数据
     scanner.load_limitup_data(args.limitup)
