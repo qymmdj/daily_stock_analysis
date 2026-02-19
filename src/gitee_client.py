@@ -234,6 +234,97 @@ class GiteeClient:
             traceback.print_exc()
             return False
 
+    def list_directory(self, remote_path: str, branch: str = "master") -> list:
+        """
+        列出目录下的文件列表
+
+        Args:
+            remote_path: 远程目录路径（如 limitup）
+            branch: 分支名称
+
+        Returns:
+            list: 文件信息列表，每项包含 name, path, sha, type 等。目录不存在或为空时返回 []
+        """
+        try:
+            url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}?access_token={self.token}&ref={branch}"
+            response = requests.get(url, timeout=30)
+            if response.status_code == 404:
+                return []
+            if response.status_code != 200:
+                return []
+            data = response.json()
+            if isinstance(data, list):
+                return data
+            return []
+        except Exception as e:
+            print(f"列出目录失败: {e}")
+            return []
+
+    def upload_binary_file(self, file_path: str, remote_path: str, branch: str = "master", message: str = None) -> bool:
+        """
+        上传二进制文件到 Gitee 仓库（如 gzip 压缩文件）
+
+        Args:
+            file_path: 本地文件路径
+            remote_path: 远程文件路径（相对于仓库根目录）
+            branch: 分支名称
+            message: 提交消息
+
+        Returns:
+            bool: 上传是否成功
+        """
+        try:
+            with open(file_path, "rb") as f:
+                content_bytes = f.read()
+            content_b64 = base64.b64encode(content_bytes).decode("ascii")
+
+            if not message:
+                message = f"更新文件: {os.path.basename(file_path)}"
+
+            upload_url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}"
+            data = {
+                "access_token": self.token,
+                "content": content_b64,
+                "message": message,
+                "branch": branch,
+            }
+            headers = {"Content-Type": "application/json"}
+
+            file_info_url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}?access_token={self.token}&ref={branch}"
+            file_response = requests.get(file_info_url)
+
+            if file_response.status_code == 200:
+                file_info_response = file_response.json()
+                sha = ""
+                if isinstance(file_info_response, dict):
+                    sha = file_info_response.get("sha", "")
+                elif isinstance(file_info_response, list) and len(file_info_response) > 0:
+                    for item in file_info_response:
+                        if item.get("name") == os.path.basename(remote_path):
+                            sha = item.get("sha", "")
+                            break
+                if sha:
+                    data["sha"] = sha
+                    response = requests.put(upload_url, json=data, headers=headers, timeout=60)
+                else:
+                    response = requests.post(upload_url, json=data, headers=headers, timeout=60)
+            else:
+                response = requests.post(upload_url, json=data, headers=headers, timeout=60)
+
+            if response.status_code in [200, 201]:
+                print(f"文件已上传到Gitee: {self.repo}/{remote_path}")
+                return True
+            print(f"上传失败，状态码: {response.status_code}")
+            return False
+        except FileNotFoundError:
+            print(f"本地文件不存在: {file_path}")
+            return False
+        except Exception as e:
+            print(f"上传到Gitee失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
     def file_exists(self, remote_path: str, branch: str = "master") -> bool:
         """
         检查远程文件是否存在
