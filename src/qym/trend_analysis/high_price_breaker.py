@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-历史新高突破分析程序
+历史突破近期高点 + 回踩分析程序
 
 功能：
 1. 读取 sources/stock_limitup.csv 文件中的股票列表
-2. 获取每只股票至少1年的历史K线数据
-3. 找出最近一年中的股价最高价
-4. 判断当前价格是否已超过一年中的最高价，超出比率控制在10%以内
+2. 获取每只股票历史K线数据
+3. 识别「突破近期高点」：某日收盘价突破过去N日的最高价
+4. 识别「回踩」：突破后价格回落，当前价在突破位附近（支撑位测试）
 5. 输出符合条件的股票信息
 """
 
+import csv
 import os
 import sys
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import argparse
 from datetime import datetime
 
@@ -21,7 +22,6 @@ from datetime import datetime
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from qym.trend_analysis.kline_fetcher import KLineFetcher
-from gitee_client import GiteeClient
 import pandas as pd
 
 
@@ -48,28 +48,34 @@ class HighPriceBreaker:
         limitup_data = {}
         
         try:
-            with open(csv_file, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
+            with open(csv_file, 'r', encoding='utf-8', newline='') as f:
+                # 支持制表符或逗号分隔
+                sample = f.read(4096)
+                f.seek(0)
+                lines = sample.split('\n')
+                delimiter = '\t' if (len(lines) > 1 and '\t' in lines[1]) else ','
+                reader = csv.reader(f, delimiter=delimiter)
+                rows = list(reader)
+                
+                if not rows:
+                    print("CSV文件为空")
+                    return []
                 
                 # 跳过表头
-                for line in lines[1:]:
-                    # 分割行数据（处理空格或制表符分隔）
-                    parts = line.strip().split()
-                    if len(parts) >= 4:
-                        # 加载股票信息
+                for row in rows[1:]:
+                    if len(row) >= 4:
+                        try:
+                            limitup_count = int(row[0])
+                        except (ValueError, IndexError):
+                            continue
                         stock_info = {
-                            'code': parts[1],
-                            'name': parts[2],
-                            'sector': parts[3],
-                            'limitup_count': int(parts[0])
+                            'code': row[1],
+                            'name': row[2],
+                            'sector': row[3],
+                            'limitup_count': limitup_count
                         }
                         stock_list.append(stock_info)
-                        
-                        # 加载涨停数据
-                        limitup_data[parts[1]] = {
-                            'count': int(parts[0]),
-                            'sector': parts[3]
-                        }
+                        limitup_data[row[1]] = {'count': limitup_count, 'sector': row[3]}
             
             print(f"成功加载 {len(stock_list)} 只股票")
             print(f"成功加载 {len(limitup_data)} 只股票的涨停数据")
@@ -140,13 +146,89 @@ class HighPriceBreaker:
         
         return df
     
-    def analyze_high_price_break(self, stock_info: Dict, days: int = 400) -> Optional[Dict]:
+    def _find_breakout_and_pullback(
+        self,
+        df: pd.DataFrame,
+        lookback_days: int = 60,
+        scan_days: int = 120,
+        pullback_tolerance: float = 8.0,
+        min_pullback_from_peak: float = 3.0
+    ) -> Optional[Tuple[int, float, float, str]]:
         """
-        分析单个股票的历史新高突破情况
+        在K线数据中寻找「突破近期高点 + 回踩」形态
+        
+        Args:
+            df: K线DataFrame
+            lookback_days: 近期高点回看天数
+            scan_days: 向前扫描寻找突破的天数
+            pullback_tolerance: 回踩容差，当前价与突破位的偏离百分比（±%）
+            min_pullback_from_peak: 从突破后峰值的最小回撤幅度（%）
+            
+        Returns:
+            (突破日索引, 突破位, 突破后峰值, 突破日期) 或 None
+        """
+        n = len(df)
+        if n < lookback_days + scan_days + 5:
+            return None
+        
+        current_price = float(df.iloc[-1]['close'])
+        # 从最近往前扫描，寻找突破点
+        for i in range(n - 2, n - scan_days - 1, -1):
+            if i < lookback_days:
+                break
+            lookback = df.iloc[i - lookback_days:i]
+            recent_high = float(lookback['high'].max())
+            close_i = float(df.iloc[i]['close'])
+            
+            # 突破条件：收盘价突破近期高点
+            if recent_high <= 0 or close_i <= recent_high:
+                continue
+            
+            breakout_level = recent_high
+            breakout_date = df.iloc[i]['date']
+            breakout_idx = i
+            
+            # 突破后的数据
+            after_breakout = df.iloc[breakout_idx + 1:]
+            if after_breakout.empty:
+                continue
+            
+            peak_after = float(after_breakout['high'].max())
+            # 突破后需有更高点（确认突破有效）
+            if peak_after <= breakout_level:
+                continue
+            
+            # 回踩条件1：当前价已从峰值回落
+            pullback_ratio = (peak_after - current_price) / peak_after * 100 if peak_after > 0 else 0
+            if pullback_ratio < min_pullback_from_peak:
+                continue
+            
+            # 回踩条件2：当前价在突破位附近（±pullback_tolerance%）
+            distance_to_breakout = (current_price - breakout_level) / breakout_level * 100 if breakout_level > 0 else 0
+            if abs(distance_to_breakout) > pullback_tolerance:
+                continue
+            
+            return (breakout_idx, breakout_level, peak_after, breakout_date)
+        
+        return None
+    
+    def analyze_high_price_break(
+        self,
+        stock_info: Dict,
+        days: int = 400,
+        lookback_days: int = 60,
+        pullback_tolerance: float = 8.0,
+        min_pullback_from_peak: float = 3.0
+    ) -> Optional[Dict]:
+        """
+        分析单个股票的「突破近期高点 + 回踩」形态
         
         Args:
             stock_info: 股票信息
-            days: 分析天数
+            days: 获取K线天数
+            lookback_days: 近期高点回看天数（默认60日）
+            pullback_tolerance: 回踩容差（%）
+            min_pullback_from_peak: 从峰值最小回撤（%）
             
         Returns:
             分析结果
@@ -158,57 +240,64 @@ class HighPriceBreaker:
         
         print(f"正在分析: {stock_code} - {stock_name}")
         
-        # 获取K线数据
         kline_data = self.fetch_kline_data(stock_code, days=days)
         if not kline_data:
             return None
         
-        # 转换为DataFrame
         df = self.convert_to_dataframe(kline_data)
         if df.empty:
             return None
         
-        # 确保有足够的数据（至少250个交易日，约1年）
-        if len(df) < 250:
-            print(f"⚠️  {stock_code} 数据不足1年，跳过分析")
+        min_len = lookback_days + 80
+        if len(df) < min_len:
+            print(f"[WARN] {stock_code} 数据不足（需至少{min_len}日），跳过分析")
             return None
         
-        # 计算最近一年的数据（最后250个交易日）
-        recent_year_data = df.tail(250)
+        found = self._find_breakout_and_pullback(
+            df,
+            lookback_days=lookback_days,
+            pullback_tolerance=pullback_tolerance,
+            min_pullback_from_peak=min_pullback_from_peak
+        )
         
-        # 找出最近一年的最高价
-        yearly_high = recent_year_data['high'].max()
+        if not found:
+            return None
         
-        # 获取当前价格（最后一天的收盘价）
-        current_price = df.iloc[-1]['close']
+        breakout_idx, breakout_level, peak_after, breakout_date = found
+        current_price = float(df.iloc[-1]['close'])
+        pullback_ratio = (peak_after - current_price) / peak_after * 100 if peak_after > 0 else 0
+        distance_to_breakout = (current_price - breakout_level) / breakout_level * 100 if breakout_level > 0 else 0
         
-        # 计算超出比率
-        if yearly_high > 0:
-            exceed_ratio = (current_price - yearly_high) / yearly_high * 100
-        else:
-            exceed_ratio = 0
-        
-        # 判断是否满足条件：当前价格超过历史最高价，且超出比率在10%以内
-        if current_price > yearly_high and exceed_ratio <= 10:
-            return {
-                'code': stock_code,
-                'name': stock_name,
-                'sector': stock_sector,
-                'limitup_count': limitup_count,
-                'yearly_high': yearly_high,
-                'current_price': current_price,
-                'exceed_ratio': exceed_ratio
-            }
-        
-        return None
+        return {
+            'code': stock_code,
+            'name': stock_name,
+            'sector': stock_sector,
+            'limitup_count': limitup_count,
+            'breakout_level': breakout_level,
+            'breakout_date': breakout_date,
+            'peak_after_breakout': peak_after,
+            'current_price': current_price,
+            'pullback_ratio': pullback_ratio,
+            'distance_to_breakout': distance_to_breakout
+        }
     
-    def batch_analyze(self, days: int = 400, max_stocks: int = None) -> List[Dict]:
+    def batch_analyze(
+        self,
+        days: int = 400,
+        max_stocks: int = None,
+        lookback_days: int = 60,
+        pullback_tolerance: float = 8.0,
+        min_pullback_from_peak: float = 3.0
+    ) -> List[Dict]:
         """
         批量分析股票
         
         Args:
-            days: 分析天数
+            days: 获取K线天数
             max_stocks: 最大分析股票数
+            lookback_days: 近期高点回看天数
+            pullback_tolerance: 回踩容差（%）
+            min_pullback_from_peak: 从峰值最小回撤（%）
             
         Returns:
             符合条件的股票列表
@@ -224,18 +313,24 @@ class HighPriceBreaker:
         if max_stocks:
             total_stocks = min(max_stocks, total_stocks)
         
-        print(f"开始批量分析 {total_stocks} 只股票...")
+        print(f"开始批量分析 {total_stocks} 只股票（近期{lookback_days}日高点，回踩容差±{pullback_tolerance}%）...")
         
         for stock_info in self.stock_list[:total_stocks]:
             processed_count += 1
             print(f"\n[{processed_count}/{total_stocks}]")
             
-            result = self.analyze_high_price_break(stock_info, days=days)
+            result = self.analyze_high_price_break(
+                stock_info,
+                days=days,
+                lookback_days=lookback_days,
+                pullback_tolerance=pullback_tolerance,
+                min_pullback_from_peak=min_pullback_from_peak
+            )
             if result:
                 results.append(result)
-                print(f"✅ 发现符合条件的股票: {stock_info['code']} - {stock_info['name']}")
+                print(f"[OK] 发现突破回踩: {stock_info['code']} - {stock_info['name']} (突破日{result['breakout_date']})")
             else:
-                print(f"❌ 不符合条件: {stock_info['code']} - {stock_info['name']}")
+                print(f"[--] 不符合条件: {stock_info['code']} - {stock_info['name']}")
         
         print(f"\n分析完成！共发现 {len(results)} 只符合条件的股票")
         return results
@@ -251,24 +346,25 @@ class HighPriceBreaker:
             print("未发现符合条件的股票")
             return
         
-        # 按超出比率排序
-        results.sort(key=lambda x: x['exceed_ratio'])
+        # 按距离突破位排序（越接近突破位越靠前）
+        results.sort(key=lambda x: abs(x['distance_to_breakout']))
         
-        print("\n" + "="*120)
-        print("历史新高突破分析结果")
-        print("="*120)
+        print("\n" + "="*140)
+        print("突破近期高点 + 回踩 分析结果")
+        print("="*140)
         print(f"分析日期: {datetime.now().strftime('%Y-%m-%d')}")
         print(f"符合条件的股票数量: {len(results)}")
-        print("="*120)
-        print("股票代码 | 股票名称 | 关联板块 | 历史涨停次数 | 历史最高价 | 当前价格 | 超出比率")
-        print("-"*120)
+        print("="*140)
+        print("股票代码 | 股票名称 | 关联板块 | 涨停次数 | 突破日 | 突破位 | 突破后峰值 | 当前价 | 回撤% | 距突破位%")
+        print("-"*140)
         
         for result in results:
-            print(f"{result['code']} | {result['name']} | {result['sector']} | {result['limitup_count']} | {result['yearly_high']:.2f} | {result['current_price']:.2f} | {result['exceed_ratio']:.2f}%")
+            print(f"{result['code']} | {result['name']} | {result['sector']} | {result['limitup_count']} | "
+                  f"{result['breakout_date']} | {result['breakout_level']:.2f} | {result['peak_after_breakout']:.2f} | "
+                  f"{result['current_price']:.2f} | {result['pullback_ratio']:.1f}% | {result['distance_to_breakout']:.1f}%")
         
-        print("="*120)
+        print("="*140)
         
-        # 保存结果到文件
         self.save_results(results)
     
     def generate_markdown_report(self, results: List[Dict]) -> str:
@@ -283,7 +379,7 @@ class HighPriceBreaker:
         """
         current_date = datetime.now().strftime('%Y-%m-%d')
         
-        report = f"# 历史新高突破分析报告 - {current_date}\n\n"
+        report = f"# 突破近期高点+回踩 分析报告 - {current_date}\n\n"
         report += f"## 分析概况\n"
         report += f"- 分析日期: {current_date}\n"
         report += f"- 符合条件的股票数量: {len(results)}\n\n"
@@ -292,23 +388,23 @@ class HighPriceBreaker:
             report += "未发现符合条件的股票\n"
             return report
         
-        # 按超出比率排序
-        results.sort(key=lambda x: x['exceed_ratio'])
+        results.sort(key=lambda x: abs(x['distance_to_breakout']))
         
         report += "## 股票列表\n"
-        report += "| 股票代码 | 股票名称 | 关联板块 | 历史涨停次数 | 历史最高价 | 当前价格 | 超出比率 |\n"
-        report += "|---------|---------|---------|-------------|-----------|---------|---------|\n"
+        report += "| 股票代码 | 股票名称 | 关联板块 | 涨停次数 | 突破日 | 突破位 | 突破后峰值 | 当前价 | 回撤% | 距突破位% |\n"
+        report += "|---------|---------|---------|---------|--------|--------|-----------|--------|-------|----------|\n"
         
         for result in results:
-            report += f"| {result['code']} | {result['name']} | {result['sector']} | {result['limitup_count']} | {result['yearly_high']:.2f} | {result['current_price']:.2f} | {result['exceed_ratio']:.2f}% |\n"
+            report += f"| {result['code']} | {result['name']} | {result['sector']} | {result['limitup_count']} | "
+            report += f"{result['breakout_date']} | {result['breakout_level']:.2f} | {result['peak_after_breakout']:.2f} | "
+            report += f"{result['current_price']:.2f} | {result['pullback_ratio']:.1f}% | {result['distance_to_breakout']:.1f}% |\n"
         
         report += "\n## 投资建议\n"
-        report += "1. 历史新高突破通常意味着股票进入新的上涨空间，具有较强的上涨动能\n"
-        report += "2. 超出比率控制在10%以内，避免追高风险\n"
-        report += "3. 建议结合成交量、技术指标等综合判断\n"
-        report += "4. 设置止损位，通常为历史最高价的5-8%\n"
+        report += "1. 突破近期高点后回踩，通常为支撑位测试，可关注企稳后的二次上攻机会\n"
+        report += "2. 距突破位越近，支撑有效性越强；负值表示略跌破，需观察是否快速收回\n"
+        report += "3. 建议结合成交量（缩量回踩更健康）、均线等综合判断\n"
+        report += "4. 止损位可设在突破位下方3-5%\n"
         report += "5. 关注大盘环境，避免在系统性风险时入场\n"
-        report += "6. 历史涨停次数多的股票通常具有较强的市场关注度和活跃度\n"
         
         return report
     
@@ -326,72 +422,82 @@ class HighPriceBreaker:
         filepath = os.path.join('data/trend_analysis', filename)
         
         try:
+            results.sort(key=lambda x: abs(x['distance_to_breakout']))
             with open(filepath, 'w', encoding='utf-8') as f:
-                f.write("历史新高突破分析结果\n")
+                f.write("突破近期高点+回踩 分析结果\n")
                 f.write(f"分析日期: {datetime.now().strftime('%Y-%m-%d')}\n")
                 f.write(f"符合条件的股票数量: {len(results)}\n")
-                f.write("-"*120 + "\n")
-                f.write("股票代码 | 股票名称 | 关联板块 | 历史涨停次数 | 历史最高价 | 当前价格 | 超出比率\n")
-                f.write("-"*120 + "\n")
+                f.write("-"*140 + "\n")
+                f.write("股票代码 | 股票名称 | 关联板块 | 涨停次数 | 突破日 | 突破位 | 突破后峰值 | 当前价 | 回撤% | 距突破位%\n")
+                f.write("-"*140 + "\n")
                 
                 for result in results:
-                    f.write(f"{result['code']} | {result['name']} | {result['sector']} | {result['limitup_count']} | {result['yearly_high']:.2f} | {result['current_price']:.2f} | {result['exceed_ratio']:.2f}%\n")
+                    f.write(f"{result['code']} | {result['name']} | {result['sector']} | {result['limitup_count']} | "
+                            f"{result['breakout_date']} | {result['breakout_level']:.2f} | {result['peak_after_breakout']:.2f} | "
+                            f"{result['current_price']:.2f} | {result['pullback_ratio']:.1f}% | {result['distance_to_breakout']:.1f}%\n")
             
             print(f"\n结果已保存到: {filepath}")
         except Exception as e:
             print(f"保存结果失败: {str(e)}")
     
-    def upload_results_to_gitee(self, results: List[Dict]):
+    def upload_results_to_gitee(self, results: List[Dict], skip_on_error: bool = True):
         """
         将分析结果上传到Gitee
         
         Args:
             results: 分析结果列表
+            skip_on_error: 出错时是否静默跳过（默认True，避免影响主流程）
         """
         try:
+            from gitee_client import GiteeClient
             client = GiteeClient()
             current_date = datetime.now().strftime('%Y%m%d')
-            
-            # 生成Markdown格式的内容
             markdown_content = self.generate_markdown_report(results)
-            
-            # 上传到Gitee
-            remote_path = f"xg/历史新高.{current_date}.md"
-            message = f"更新历史新高突破分析报告 {current_date}"
+            remote_path = f"xg/突破回踩.{current_date}.md"
+            message = f"更新突破近期高点+回踩分析报告 {current_date}"
             
             success = client.upload_content(markdown_content, remote_path, message=message)
             
             if success:
-                print(f"✅ 分析报告已成功上传至Gitee: {remote_path}")
+                print(f"[OK] 分析报告已成功上传至Gitee: {remote_path}")
             else:
-                print(f"❌ 分析报告上传失败: {remote_path}")
-                
+                print(f"[FAIL] 分析报告上传失败: {remote_path}")
+        except ImportError as e:
+            if not skip_on_error:
+                raise
+            print(f"[WARN] 跳过Gitee上传（GiteeClient未配置）: {e}")
         except Exception as e:
-            print(f"上传到Gitee失败: {str(e)}")
+            if not skip_on_error:
+                raise
+            print(f"[WARN] 上传到Gitee失败（已跳过）: {str(e)}")
 
 
 def main():
     """主函数"""
-    parser = argparse.ArgumentParser(description='历史新高突破分析程序')
+    parser = argparse.ArgumentParser(description='突破近期高点+回踩分析程序')
     parser.add_argument('--limitup', type=str, default='sources/stock_limitup.csv', help='涨停CSV文件路径')
-    parser.add_argument('--days', type=int, default=400, help='分析天数，默认400天')
+    parser.add_argument('--days', type=int, default=400, help='获取K线天数，默认400天')
     parser.add_argument('--max-stocks', type=int, default=None, help='最大分析股票数')
+    parser.add_argument('--lookback', type=int, default=60, help='近期高点回看天数，默认60日')
+    parser.add_argument('--tolerance', type=float, default=8.0, help='回踩容差（%%），默认8')
+    parser.add_argument('--min-pullback', type=float, default=3.0, help='从峰值最小回撤（%%），默认3')
     
     args = parser.parse_args()
     
     analyzer = HighPriceBreaker()
-    
-    # 加载股票列表和涨停数据
     analyzer.load_stock_and_limitup_data(args.limitup)
     
-    # 批量分析
-    results = analyzer.batch_analyze(days=args.days, max_stocks=args.max_stocks)
+    results = analyzer.batch_analyze(
+        days=args.days,
+        max_stocks=args.max_stocks,
+        lookback_days=args.lookback,
+        pullback_tolerance=args.tolerance,
+        min_pullback_from_peak=args.min_pullback
+    )
     
-    # 生成输出
     analyzer.generate_output(results)
-    
-    # 上传结果到Gitee
-    analyzer.upload_results_to_gitee(results)
+    if results:
+        analyzer.upload_results_to_gitee(results)
 
 
 if __name__ == "__main__":

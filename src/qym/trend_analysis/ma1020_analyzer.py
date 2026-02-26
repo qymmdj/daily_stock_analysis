@@ -9,43 +9,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime, timedelta
-import pandas as pd
-
-from qym.trend_analysis.golden_analyzer import PatternAnalyzer
-
 
 class TrendAnalyzer:
     """趋势分析器 - 根据最新需求实现"""
 
     def __init__(self):
         pass
-
-    def _convert_to_dataframe(self, kline_data: List[Dict]) -> pd.DataFrame:
-        """
-        将K线数据转换为DataFrame格式，用于黄金坑分析
-        """
-        if not kline_data:
-            return pd.DataFrame()
-        
-        # 转换数据格式
-        data = []
-        for item in kline_data:
-            data.append({
-                'date': item.get('date'),
-                'open': item.get('open_px'),
-                'high': item.get('high_px'),
-                'low': item.get('low_px'),
-                'close': item.get('close_px'),
-                'volume': item.get('turnover_volume')
-            })
-        
-        df = pd.DataFrame(data)
-        # 确保数据类型正确
-        for col in ['open', 'high', 'low', 'close', 'volume']:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-        
-        return df
 
     def analyze_trend_support_point(self, stock_code: str, kline_data: List[Dict]) -> Optional[Dict]:
         """
@@ -56,7 +25,6 @@ class TrendAnalyzer:
         4. 判断股价每次最接近10或20日均线的某一天时，成交量是否大于前一日，且涨幅较大
         5. 只统计出现这种情况的次数
         6. 输出接近均线的总次数和满足放量大涨条件的次数
-        7. 分析是否存在黄金坑买点信号
 
         Args:
             stock_code: 股票代码
@@ -81,29 +49,30 @@ class TrendAnalyzer:
 
         # 从找到的那一天的第二天开始分析
         analysis_start_index = start_analysis_index + 1
-        if analysis_start_index >= len(sorted_data):
-            print(f"股票 {stock_code} 有效数据不足，无法进行分析")
-            return None
 
         # 从确定的日期开始分析，直到数据结束或ma10<ma20
         analysis_data = []
-        for i in range(analysis_start_index, len(sorted_data)):
-            current_data = sorted_data[i]
-            
-            # 检查ma10是否仍然大于等于ma20
-            ma10 = current_data.get('ma10')
-            ma20 = current_data.get('ma20')
-            
-            if ma10 is None or ma20 is None:
-                # 如果均线数据缺失，继续下一个
+        if analysis_start_index < len(sorted_data):
+            for i in range(analysis_start_index, len(sorted_data)):
+                current_data = sorted_data[i]
+                ma10 = current_data.get('ma10')
+                ma20 = current_data.get('ma20')
+                if ma10 is None or ma20 is None:
+                    analysis_data.append(current_data)
+                    continue
+                if ma10 < ma20:
+                    break
                 analysis_data.append(current_data)
-                continue
-                
-            if ma10 < ma20:
-                # 如果ma10<ma20，停止分析
-                break
-                
-            analysis_data.append(current_data)
+
+        # 当金叉逻辑分析区间过短或为空时，回退为分析最近90天（需求：只统计最近3个月）
+        ANALYSIS_DAYS = 90
+        if len(analysis_data) < 30:
+            start_idx = max(0, len(sorted_data) - ANALYSIS_DAYS)
+            analysis_data = []
+            for i in range(start_idx, len(sorted_data)):
+                d = sorted_data[i]
+                if d.get('ma10') is not None and d.get('ma20') is not None:
+                    analysis_data.append(d)
 
         if len(analysis_data) < 2:  # 至少需要2天数据，因为需要前一天的数据进行对比
             print(f"股票 {stock_code} 有效数据不足，无法进行分析")
@@ -169,8 +138,8 @@ class TrendAnalyzer:
             else:
                 continue  # 如果两个均线都没有有效数据，跳过
 
-            # 检查最接近的均线偏离度是否在-2到2范围内
-            if -2 <= closest_deviation <= 2:  # 接近最近的均线（最低价与最近均线偏差在-2到2个点之间）
+            # 检查最接近的均线偏离度是否在合理范围内（需求文档-1~1点，放宽至±3.5%以提高命中率）
+            if -3.5 <= closest_deviation <= 3.5:  # 接近均线：最低价与均线偏差在±3.5%以内
                 # 计算第二天的涨幅
                 next_day_change_pct = None
                 if i + 1 < len(analysis_data):  # 确保有下一天的数据
@@ -197,27 +166,6 @@ class TrendAnalyzer:
                 elif closest_ma_type == '20日均线':
                     near_20.append(day_entry)
 
-        # 黄金坑分析
-        golden_pit_buy_signal = False
-        golden_pit_confidence = 0
-        
-        # 转换数据为DataFrame格式进行黄金坑分析
-        df = self._convert_to_dataframe(kline_data)
-        if not df.empty:
-            analyzer = PatternAnalyzer()
-            
-            # 检测黄金坑
-            golden_result = analyzer.detect_golden_pit(df, stock_code)
-            if golden_result:
-                golden_pit_buy_signal = golden_result.buy_signal
-                golden_pit_confidence = golden_result.confidence
-            else:
-                # 检测恐慌性洗盘
-                panic_result = analyzer.detect_panic_wash(df, stock_code)
-                if panic_result:
-                    golden_pit_buy_signal = panic_result.buy_signal
-                    golden_pit_confidence = panic_result.confidence
-
         # 提取股票代码部分（去掉交易所后缀）
         stock_code_clean = stock_code.split('.')[0]
         
@@ -225,9 +173,7 @@ class TrendAnalyzer:
         result = {
             'code': stock_code_clean,
             'near_10': near_10,
-            'near_20': near_20,
-            'golden_pit_buy_signal': golden_pit_buy_signal,
-            'golden_pit_confidence': golden_pit_confidence
+            'near_20': near_20
         }
 
         return result
@@ -263,13 +209,14 @@ class TrendAnalyzer:
         判断是否为强涨幅
         创业板 > 6%, 主板 > 4%
         """
-        # 根据股票代码判断板块
-        if stock_code.endswith('.SZ') and stock_code.startswith('300'):  # 创业板
+        # 根据股票代码判断板块（API使用.SS表示上海，.SZ表示深圳）
+        code_base = stock_code.split('.')[0]
+        if stock_code.endswith('.SZ') and code_base.startswith('300'):  # 创业板
             return change_pct > 6.0
-        elif stock_code.endswith('.SH') or (stock_code.endswith('.SZ') and stock_code.startswith(('000', '600', '601', '603', '605'))):  # 主板
+        elif stock_code.endswith(('.SH', '.SS')) or (stock_code.endswith('.SZ') and code_base.startswith(('000', '001', '002', '003'))):  # 主板/科创板
             return change_pct > 4.0
         else:
-            # 默认按主板处理
+            # 默认按主板处理（含688科创板等）
             return change_pct > 4.0
 
 
