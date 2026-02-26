@@ -3,8 +3,8 @@ name: 选股通每日涨停数据采集
 on:
   # 定时触发 - 每天北京时间 15:10 和 17:00
   schedule:
-    - cron: '20 8 * * 1-5'     # 周一到周五，UTC 7:10 = 北京时间 15:10
-    - cron: '50 8 * * 1-5'     # 周一到周五，UTC 7:10 = 北京时间 15:10 
+    - cron: '20 7 * * 1-5'     # 周一到周五，UTC 7:10 = 北京时间 15:10
+    - cron: '50 7 * * 1-5'     # 周一到周五，UTC 7:10 = 北京时间 15:10 
   # 手动触发
   workflow_dispatch:
 
@@ -17,7 +17,7 @@ jobs:
   collect:
     runs-on: ubuntu-latest
     # 添加超时限制，防止任务卡死
-    timeout-minutes: 10
+    timeout-minutes: 600
     
     steps:
       - name: 检出代码
