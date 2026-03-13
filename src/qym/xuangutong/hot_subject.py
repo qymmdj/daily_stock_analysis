@@ -37,7 +37,12 @@ def fetch_hot_subject_data() -> dict:
         response = requests.get(API_URL, timeout=30)
         response.raise_for_status()
         data = response.json()
-        print(f"✅ 成功获取热点题材数据，共 {len(data.get('data', {}).get('items', []))} 条")
+
+        # items 可能为 None，显式处理以避免 len(None) 异常
+        items = data.get('data', {}).get('items')
+        count = len(items) if isinstance(items, list) else 0
+
+        print(f"成功获取热点题材数据，共 {count} 条")
         return data
     except Exception as e:
         print(f"❌ 获取热点题材数据失败: {e}")
