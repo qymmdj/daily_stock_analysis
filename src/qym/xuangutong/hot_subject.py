@@ -59,13 +59,29 @@ def generate_file_name(data: dict) -> str:
         items = data.get('data', {}).get('items', [])
         if items and len(items) > 0:
             enter_time = items[0][6]
-            file_date = datetime.fromtimestamp(enter_time).strftime("%Y%m%d")
+
+            # 统一转为整数，便于后续判断
+            if isinstance(enter_time, str):
+                enter_time = int(enter_time)
+
+            file_date: str
+
+            # 情况 1：本身就是形如 20260313 的年月日
+            if isinstance(enter_time, int) and 19000101 <= enter_time <= 21001231:
+                file_date = str(enter_time)
+            else:
+                # 情况 2/3：Unix 时间戳（秒级或毫秒级）
+                ts = float(enter_time)
+                if ts > 1e12:  # 毫秒级
+                    ts = ts / 1000.0
+                file_date = datetime.fromtimestamp(ts).strftime("%Y%m%d")
+
             return f"{file_date}.json"
         else:
             today = datetime.now().strftime("%Y%m%d")
             return f"{today}.json"
     except Exception as e:
-        print(f"⚠️ 从 enter_time 生成文件名失败，使用当前日期: {e}")
+        print(f"从 enter_time 生成文件名失败，使用当前日期: {e}")
         today = datetime.now().strftime("%Y%m%d")
         return f"{today}.json"
 
