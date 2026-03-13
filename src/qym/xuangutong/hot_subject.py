@@ -77,9 +77,15 @@ def generate_file_name(data: dict) -> str:
             else:
                 # 情况 2/3：Unix 时间戳（秒级或毫秒级）
                 ts = float(enter_time)
-                if ts > 1e12:  # 毫秒级
-                    ts = ts / 1000.0
-                file_date = datetime.fromtimestamp(ts).strftime("%Y%m%d")
+                # 检查时间戳是否有效（大于0）
+                if ts > 0:
+                    if ts > 1e12:  # 毫秒级
+                        ts = ts / 1000.0
+                    file_date = datetime.fromtimestamp(ts).strftime("%Y%m%d")
+                else:
+                    # 时间戳无效，使用当前日期
+                    today = datetime.now().strftime("%Y%m%d")
+                    return f"{today}.json"
 
             return f"{file_date}.json"
         else:
