@@ -105,12 +105,12 @@ class PatternAnalyzer:
     形态识别分析器
 
     核心算法：识别黄金坑和恐慌性洗盘形态
-    黄金坑特征：
+    黄金坑集合MACD底背离特征：
     1. 前期：上升趋势或横盘整理
     2. 挖坑：突然快速下跌（10%-30%）
     3. 坑底：低位震荡，成交量萎缩
-    4. 反弹：快速反弹，收复失地
-    5. 突破：突破前期高点
+    4. 在底部出现MACD底背离，绿柱逐渐缩短
+
 
     恐慌性洗盘特征：
     1. 下跌更猛烈，时间更短
@@ -122,11 +122,11 @@ class PatternAnalyzer:
     PRE_TREND_DAYS = 20           # 前期趋势分析天数
     DIP_MIN_AMPLITUDE = 5.0       # 最小下跌幅度（%）
     DIP_MAX_AMPLITUDE = 35.0      # 最大下跌幅度（%）
-    DIP_MIN_DAYS = 2              # 最小下跌天数
-    DIP_MAX_DAYS = 15             # 最大下跌天数
+    DIP_MIN_DAYS = 4              # 最小下跌天数
+    DIP_MAX_DAYS = 6             # 最大下跌天数
     BOTTOM_MIN_DAYS = 3           # 最小坑底震荡天数
     BOTTOM_MAX_DAYS = 20          # 最大坑底震荡天数
-    REBOUND_MIN_AMPLITUDE = 10.0  # 最小反弹幅度（%）
+    REBOUND_MIN_AMPLITUDE = 5.0  # 最小反弹幅度（%）
     REBOUND_MIN_DAYS = 3          # 最小反弹天数
     VOLUME_SHRINK_RATIO = 0.7     # 缩量阈值（相对于前期均量）
     VOLUME_EXPAND_RATIO = 1.5     # 放量阈值
@@ -234,6 +234,26 @@ class PatternAnalyzer:
 
         # 计算RSI
         df = self._calculate_rsi(df)
+
+        # 计算MACD指标
+        df = self._calculate_macd(df)
+
+        return df
+
+    def _calculate_macd(self, df: pd.DataFrame, fast_period: int = 12, slow_period: int = 26, signal_period: int = 9) -> pd.DataFrame:
+        """计算MACD指标"""
+        df = df.copy()
+
+        # 计算快速EMA
+        df['EMA12'] = df['close'].ewm(span=fast_period, adjust=False).mean()
+        # 计算慢速EMA
+        df['EMA26'] = df['close'].ewm(span=slow_period, adjust=False).mean()
+        # 计算MACD线
+        df['MACD'] = df['EMA12'] - df['EMA26']
+        # 计算信号线
+        df['MACD_Signal'] = df['MACD'].ewm(span=signal_period, adjust=False).mean()
+        # 计算MACD柱状图
+        df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
 
         return df
 
@@ -365,7 +385,7 @@ class PatternAnalyzer:
             rebound_amplitude = 0
 
         # 检查形态有效性
-        if not self._validate_pattern(df, dip_start_idx, dip_end_idx, bottom_end_idx, rebound_end_idx):
+        if not self._validate_pattern(df, dip_start_idx, dip_end_idx, bottom_end_idx, rebound_end_idx, pattern_type="黄金坑"):
             return None
 
         # 5. 确定当前阶段
@@ -523,11 +543,32 @@ class PatternAnalyzer:
 
         return None
 
-    def _validate_pattern(self, df: pd.DataFrame, dip_start: int, dip_end: int,
-                         bottom_end: int, rebound_end: int) -> bool:
+    def _validate_pattern(self, df: pd.DataFrame, dip_start: int, dip_end: int, bottom_end: int, rebound_end: int, pattern_type: str = "黄金坑") -> bool:
         """验证形态有效性"""
+        # 获取时间段信息
+        try:
+            # 首先尝试从date列获取日期
+            if 'date' in df.columns:
+                dip_start_date = df['date'].iloc[dip_start-1] if dip_start-1 >= 0 else f"索引{dip_start-1}"
+                dip_end_date = df['date'].iloc[dip_end]
+                bottom_end_date = df['date'].iloc[bottom_end]
+                rebound_end_date = df['date'].iloc[rebound_end]
+                time_period = f"[{dip_start_date} 至 {rebound_end_date}]"
+            # 其次尝试从索引获取日期
+            elif hasattr(df.index, 'strftime'):
+                dip_start_date = df.index[dip_start-1].strftime('%Y-%m-%d') if dip_start-1 >= 0 else f"索引{dip_start-1}"
+                dip_end_date = df.index[dip_end].strftime('%Y-%m-%d')
+                bottom_end_date = df.index[bottom_end].strftime('%Y-%m-%d')
+                rebound_end_date = df.index[rebound_end].strftime('%Y-%m-%d')
+                time_period = f"[{dip_start_date} 至 {rebound_end_date}]"
+            else:
+                time_period = f"[索引{dip_start-1} 至 索引{rebound_end}]"
+        except:
+            time_period = f"[索引{dip_start-1} 至 索引{rebound_end}]"
+
         # 检查时间顺序
         if not (dip_start < dip_end <= bottom_end <= rebound_end):
+            logger.debug(f"形态验证失败 {time_period}：时间顺序不正确 - dip_start={dip_start}, dip_end={dip_end}, bottom_end={bottom_end}, rebound_end={rebound_end}")
             return False
 
         # 检查下跌幅度
@@ -536,27 +577,49 @@ class PatternAnalyzer:
         dip_amplitude = (dip_end_price - dip_start_price) / dip_start_price * 100
 
         if abs(dip_amplitude) < self.DIP_MIN_AMPLITUDE or abs(dip_amplitude) > self.DIP_MAX_AMPLITUDE:
+            logger.debug(f"形态验证失败 {time_period}：下跌幅度不符合要求 - 实际幅度={abs(dip_amplitude):.2f}%, 要求范围={self.DIP_MIN_AMPLITUDE}%-{self.DIP_MAX_AMPLITUDE}%")
             return False
 
         # 检查下跌持续时间
         dip_duration = dip_end - dip_start + 1
         if dip_duration < self.DIP_MIN_DAYS or dip_duration > self.DIP_MAX_DAYS:
+            logger.debug(f"形态验证失败 {time_period}：下跌持续时间不符合要求 - 实际天数={dip_duration}, 要求范围={self.DIP_MIN_DAYS}-{self.DIP_MAX_DAYS}天")
             return False
 
         # 检查坑底持续时间
         bottom_duration = bottom_end - dip_end
         if bottom_duration < self.BOTTOM_MIN_DAYS or bottom_duration > self.BOTTOM_MAX_DAYS:
+            logger.debug(f"形态验证失败 {time_period}：坑底持续时间不符合要求 - 实际天数={bottom_duration}, 要求范围={self.BOTTOM_MIN_DAYS}-{self.BOTTOM_MAX_DAYS}天")
             return False
 
-        # 检查反弹幅度（如果已有反弹）
-        if rebound_end > bottom_end:
-            rebound_start_price = df['close'].iloc[bottom_end]
-            rebound_end_price = df['close'].iloc[rebound_end]
-            rebound_amplitude = (rebound_end_price - rebound_start_price) / rebound_start_price * 100
+        # 检查是否存在MACD底背离
+        current_idx = len(df) - 1
+        has_macd_divergence = self._check_macd_divergence(df, current_idx, dip_start, dip_end)
 
-            if rebound_amplitude < self.REBOUND_MIN_AMPLITUDE:
+        # 如果存在MACD底背离，则不考虑反弹幅度和天数条件
+        if not has_macd_divergence:
+            # 检查反弹幅度（如果已有反弹）
+            if rebound_end > bottom_end:
+                rebound_start_price = df['close'].iloc[bottom_end]
+                rebound_end_price = df['close'].iloc[rebound_end]
+                rebound_amplitude = (rebound_end_price - rebound_start_price) / rebound_start_price * 100
+
+                if rebound_amplitude < self.REBOUND_MIN_AMPLITUDE:
+                    logger.debug(f"形态验证失败 {time_period}：反弹幅度不符合要求 - 实际幅度={rebound_amplitude:.2f}%, 要求最小幅度={self.REBOUND_MIN_AMPLITUDE}%")
+                    return False
+
+                # 检查反弹持续时间
+                rebound_duration = rebound_end - bottom_end
+                if rebound_duration < self.REBOUND_MIN_DAYS:
+                    logger.debug(f"形态验证失败 {time_period}：反弹持续时间不符合要求 - 实际天数={rebound_duration}, 要求最小天数={self.REBOUND_MIN_DAYS}天")
+                    return False
+            else:
+                logger.debug(f"形态验证失败 {time_period}：尚未开始反弹")
                 return False
+        else:
+            logger.debug(f"{time_period}：MACD底背离，跳过反弹幅度和天数验证")
 
+        logger.debug(f"{time_period}：{pattern_type}形态验证成功")
         return True
 
     def _determine_stage(self, current_idx: int, dip_start: int, dip_end: int,
@@ -674,8 +737,7 @@ class PatternAnalyzer:
 
         return min(10, score)
 
-    def _calculate_technical_score(self, df: pd.DataFrame, dip_start: int, dip_end: int,
-                                  bottom_end: int, rebound_end: int) -> float:
+    def _calculate_technical_score(self, df: pd.DataFrame, dip_start: int, dip_end: int, bottom_end: int, rebound_end: int) -> float:
         """计算技术指标一致性得分"""
         score = 0.0
 
@@ -702,11 +764,20 @@ class PatternAnalyzer:
                 if ma5 > ma10:
                     score += 2
 
+        # 检查MACD指标
+        if all(col in df.columns for col in ['MACD', 'MACD_Signal', 'MACD_Hist']):
+            # 反弹时MACD应金叉
+            if rebound_end > bottom_end:
+                macd = df['MACD'].iloc[rebound_end]
+                macd_signal = df['MACD_Signal'].iloc[rebound_end]
+                macd_hist = df['MACD_Hist'].iloc[rebound_end]
+
+                if macd > macd_signal and macd_hist > 0:
+                    score += 2
+
         return min(10, score)
 
-    def _check_buy_signal(self, df: pd.DataFrame, current_idx: int, dip_start: int, dip_end: int,
-                         bottom_end: int, rebound_end: int, dip_amplitude: float,
-                         rebound_amplitude: float) -> Tuple[bool, str]:
+    def _check_buy_signal(self, df: pd.DataFrame, current_idx: int, dip_start: int, dip_end: int, bottom_end: int, rebound_end: int, dip_amplitude: float, rebound_amplitude: float) -> Tuple[bool, str]:
         """检查买点信号"""
         # 如果当前处于坑底或反弹初期，可能是买点
         current_stage = self._determine_stage(current_idx, dip_start, dip_end, bottom_end, rebound_end, df)
@@ -736,7 +807,46 @@ class PatternAnalyzer:
                 if is_bullish and vol_ratio > self.VOLUME_EXPAND_RATIO:
                     return True, "反弹初期放量上涨，出现买点"
 
+        # 检查MACD底背离
+        if self._check_macd_divergence(df, current_idx, dip_start, dip_end):
+            return True, "MACD底背离，出现买点"
+
         return False, "尚未出现明确买点"
+
+    def _check_macd_divergence(self, df: pd.DataFrame, current_idx: int, dip_start: int, dip_end: int) -> bool:
+        """检查MACD底背离
+        
+        底背离条件：
+        1. 价格创近期新低
+        2. MACD指标没有创新低，反而开始上升
+        """
+        if 'MACD' not in df.columns or 'MACD_Hist' not in df.columns:
+            return False
+
+        # 确保有足够的数据
+        if current_idx < dip_start + 10:
+            return False
+
+        # 检查价格是否创近期新低
+        recent_low = df['low'].iloc[dip_start:current_idx+1].min()
+        recent_low_idx = df['low'].iloc[dip_start:current_idx+1].idxmin()
+
+        # 检查MACD是否在价格创新低后开始上升
+        if recent_low_idx < current_idx:
+            # 价格创新低的位置
+            low_macd = df['MACD'].iloc[recent_low_idx]
+            current_macd = df['MACD'].iloc[current_idx]
+            
+            # 检查MACD是否在上升
+            if current_macd > low_macd:
+                # 检查MACD柱状图是否由负转正
+                low_macd_hist = df['MACD_Hist'].iloc[recent_low_idx]
+                current_macd_hist = df['MACD_Hist'].iloc[current_idx]
+                
+                if current_macd_hist > low_macd_hist and current_macd_hist > 0:
+                    return True
+
+        return False
 
     def _find_breakout_date(self, df: pd.DataFrame, rebound_end: int, pre_high: float) -> Optional[str]:
         """寻找突破前期高点的日期"""

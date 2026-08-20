@@ -1,85 +1,87 @@
-name: MA趋势分析
+name: 消息题材采集分析
 
 on:
-  # 定时触发
+  # 定时触发 - 每小时运行一次（UTC 整点 = 北京时间整点）
   schedule:
-    - cron: '35 6 * * *'  # UTC 时间，对应北京时间 14:35
+    - cron: '0 * * * *'
   # 手动触发
   workflow_dispatch:
 
-# 并发控制：同一时间只运行一个分析任务
+# 并发控制：同一时间只运行一个采集任务
 concurrency:
-  group: ma-trend-analysis
+  group: news-subject
   cancel-in-progress: false
 
 jobs:
-  analyze:
+  collect:
     runs-on: ubuntu-latest
-    # 增加超时限制，批量分析可能需要更长时间
-    timeout-minutes: 60
-    
+    # 添加超时限制，防止任务卡死
+    timeout-minutes: 30
+
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
-      
+
       - name: 设置 Python 环境
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
-      
+
       - name: 安装依赖
         run: |
           pip install --upgrade pip
-          echo "正在安装依赖..."
-          pip install -r requirements.txt
-      
+          pip install requests
+
       - name: 创建必要目录
         run: |
-          mkdir -p data/trend_analysis
-      
-      - name: 执行MA趋势分析
+          mkdir -p data/news_subject
+
+      - name: 执行消息题材采集分析
         env:
           # Gitee 配置
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           GITEE_REPO: ${{ vars.GITEE_REPO || 'qymmdj/stockdb' }}
-          GITEE_PATH: ${{ vars.GITEE_PATH || 'dayanalysis' }}
-          
+
+          # LLM 配置（DeepSeek，OpenAI 兼容接口）
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'https://api.deepseek.com/v1' }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'deepseek-v4-pro' }}
+
           # 系统配置
           LOG_LEVEL: INFO
-          
+
         run: |
           echo "=========================================="
-          echo "📊 MA趋势分析"
+          echo "📊 消息题材采集分析"
           echo "=========================================="
           echo "⏰ 时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
-          echo "📁 Gitee 仓库: $GITEE_REPO"
-          echo "📂 Gitee 路径: $GITEE_PATH"
           echo "🔑 Gitee Token: $([ -n "$GITEE_TOKEN" ] && echo '✅ 已配置' || echo '❌ 未配置')"
+          echo "🔑 OpenAI API Key: $([ -n "$OPENAI_API_KEY" ] && echo '✅ 已配置' || echo '❌ 未配置（消息将不做价值分析）')"
           echo "=========================================="
           echo ""
-          
-          python src/qym/trend_analysis/main_analyzer.py
-      
-      - name: 上传分析结果
+
+          python src/qym/eastmoney/news/newsSubject.py
+
+      - name: 上传采集数据
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ma-trend-analysis-results-${{ github.run_number }}
-          path: data/trend_analysis/
-          retention-days: 30
-      
+          name: news-subject-data-${{ github.run_number }}
+          path: data/news_subject/
+          retention-days: 7
+
       - name: 显示运行结果
         if: always()
         run: |
           echo ""
           echo "=========================================="
-          echo "📊 分析完成"
+          echo "📊 采集完成"
           echo "=========================================="
-          if [ -d "data/trend_analysis" ] && [ "$(ls -A data/trend_analysis 2>/dev/null)" ]; then
-            echo "分析结果文件:"
-            ls -la data/trend_analysis/
+          if [ -d "data/news_subject" ] && [ "$(ls -A data/news_subject 2>/dev/null)" ]; then
+            echo "采集的数据文件:"
+            ls -la data/news_subject/
           else
-            echo "⚠️ 未生成分析结果文件"
+            echo "⚠️ 未生成数据文件"
           fi
           echo "=========================================="

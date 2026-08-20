@@ -20,13 +20,14 @@ class KLineFetcher:
     def __init__(self):
         self.base_url = "https://api-ddc-wscn.xuangubao.com.cn/market/kline"
         
-    def fetch_kline_data(self, stock_code: str, days: int = 180) -> Optional[List[Dict]]:
+    def fetch_kline_data(self, stock_code: str, days: int = 180, end_date: Optional[str] = None) -> Optional[List[Dict]]:
         """
         获取指定股票的历史K线数据
         
         Args:
             stock_code: 股票代码，如 "603212.SS"
             days: 查询天数，默认180天（半年）
+            end_date: 结束日期，格式为"YYYY-MM-DD"，如果不指定则使用当前日期
             
         Returns:
             K线数据列表，每个元素包含开盘价、收盘价、最高价、最低价等信息
@@ -45,7 +46,8 @@ class KLineFetcher:
             response.raise_for_status()
             data = response.json()
 
-           # print(f"获取数据成功: {data}")
+
+            #print(f"获取数据成功: {data}")
             
             if data.get('code') != 20000:
                 print(f"获取数据失败: {data.get('message')}")
@@ -74,6 +76,14 @@ class KLineFetcher:
                     
                     result.append(kline_dict)
                 
+            # 如果指定了结束日期，过滤数据
+            if end_date:
+                filtered_result = []
+                for kline in result:
+                    if kline.get('date') <= end_date:
+                        filtered_result.append(kline)
+                result = filtered_result
+            
             return result
             
         except Exception as e:

@@ -11,17 +11,16 @@
 5. 输出符合条件的股票信息
 """
 
-import csv
 import os
 import sys
 from typing import Dict, List, Optional, Tuple
 import argparse
 from datetime import datetime
 
-# 添加src目录到Python路径
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from qym.trend_analysis.kline_fetcher import KLineFetcher
+from qym.trend_analysis.csv_reader import StockLimitupCSVReader
 import pandas as pd
 
 
@@ -44,38 +43,24 @@ class HighPriceBreaker:
         Returns:
             股票信息列表
         """
-        stock_list = []
-        limitup_data = {}
-        
         try:
-            with open(csv_file, 'r', encoding='utf-8', newline='') as f:
-                # 支持制表符或逗号分隔
-                sample = f.read(4096)
-                f.seek(0)
-                lines = sample.split('\n')
-                delimiter = '\t' if (len(lines) > 1 and '\t' in lines[1]) else ','
-                reader = csv.reader(f, delimiter=delimiter)
-                rows = list(reader)
-                
-                if not rows:
-                    print("CSV文件为空")
-                    return []
-                
-                # 跳过表头
-                for row in rows[1:]:
-                    if len(row) >= 4:
-                        try:
-                            limitup_count = int(row[0])
-                        except (ValueError, IndexError):
-                            continue
-                        stock_info = {
-                            'code': row[1],
-                            'name': row[2],
-                            'sector': row[3],
-                            'limitup_count': limitup_count
-                        }
-                        stock_list.append(stock_info)
-                        limitup_data[row[1]] = {'count': limitup_count, 'sector': row[3]}
+            reader = StockLimitupCSVReader(csv_file)
+            stock_info_list = reader.get_stock_list()
+            
+            stock_list = []
+            limitup_data = {}
+            
+            for info in stock_info_list:
+                stock_list.append({
+                    'code': info.code,
+                    'name': info.name,
+                    'sector': info.sector,
+                    'limitup_count': info.limitup_count
+                })
+                limitup_data[info.code] = {
+                    'count': info.limitup_count,
+                    'sector': info.sector
+                }
             
             print(f"成功加载 {len(stock_list)} 只股票")
             print(f"成功加载 {len(limitup_data)} 只股票的涨停数据")

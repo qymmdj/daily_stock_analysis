@@ -328,20 +328,64 @@ class GiteeClient:
     def file_exists(self, remote_path: str, branch: str = "master") -> bool:
         """
         检查远程文件是否存在
-        
+
         Args:
             remote_path: 远程文件路径
             branch: 分支名称
-            
+
         Returns:
             bool: 文件是否存在
         """
         try:
             url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}?access_token={self.token}&ref={branch}"
             response = requests.get(url, timeout=30)
-            
+
             return response.status_code == 200
         except Exception:
+            return False
+
+    def delete_file(self, remote_path: str, sha: str = None, branch: str = "master", message: str = None) -> bool:
+        """
+        删除 Gitee 仓库中的文件
+
+        Args:
+            remote_path: 远程文件路径（相对于仓库根目录）
+            sha: 文件 sha（不提供时自动查询）
+            branch: 分支名称
+            message: 提交消息
+
+        Returns:
+            bool: 删除是否成功
+        """
+        try:
+            if not message:
+                message = f"删除文件: {os.path.basename(remote_path)}"
+
+            if not sha:
+                file_info_url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}?access_token={self.token}&ref={branch}"
+                response = requests.get(file_info_url, timeout=30)
+                if response.status_code != 200:
+                    print(f"删除失败，文件不存在: {remote_path}")
+                    return False
+                sha = response.json().get("sha", "")
+
+            url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}"
+            data = {
+                "access_token": self.token,
+                "sha": sha,
+                "message": message,
+                "branch": branch,
+            }
+            headers = {"Content-Type": "application/json"}
+            response = requests.delete(url, json=data, headers=headers, timeout=30)
+
+            if response.status_code in [200, 204]:
+                print(f"文件已从Gitee删除: {self.repo}/{remote_path}")
+                return True
+            print(f"删除失败，状态码: {response.status_code}")
+            return False
+        except Exception as e:
+            print(f"删除Gitee文件失败: {e}")
             return False
 
     def get_file_content(self, remote_path: str, branch: str = "master") -> Optional[str]:

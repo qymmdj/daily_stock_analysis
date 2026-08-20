@@ -12,16 +12,15 @@
 
 import os
 import sys
-import csv
 from typing import Dict, List, Optional, Tuple
 import argparse
 from datetime import datetime, timedelta
 
-# 添加src目录到Python路径
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from qym.trend_analysis.kline_fetcher import KLineFetcher
 from qym.trend_analysis.golden_analyzer import PatternAnalyzer, PatternResult, PatternType, PatternStage
+from qym.trend_analysis.csv_reader import StockLimitupCSVReader
 from gitee_client import GiteeClient
 import pandas as pd
 import numpy as np
@@ -47,23 +46,17 @@ class GoldenPitScanner:
         Returns:
             股票信息列表
         """
-        stock_list = []
-        
         try:
-            with open(csv_file, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-                
-                # 跳过表头
-                for line in lines[1:]:
-                    # 分割行数据（处理空格或制表符分隔）
-                    parts = line.strip().split()
-                    if len(parts) >= 4:
-                        stock_info = {
-                            'code': parts[1],
-                            'name': parts[2],
-                            'province': '未知'  # 从涨停数据中无法获取省份信息
-                        }
-                        stock_list.append(stock_info)
+            reader = StockLimitupCSVReader(csv_file)
+            stock_info_list = reader.get_stock_list()
+            
+            stock_list = []
+            for info in stock_info_list:
+                stock_list.append({
+                    'code': info.code,
+                    'name': info.name,
+                    'province': '未知'
+                })
             
             print(f"成功从涨停数据加载 {len(stock_list)} 只股票")
             self.stock_list = stock_list
@@ -83,27 +76,16 @@ class GoldenPitScanner:
         Returns:
             涨停数据字典 {股票代码: (涨停次数, 关联板块)}
         """
-        limitup_data = {}
-        
         try:
-            with open(csv_file, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-                
-                # 跳过表头
-                for line in lines[1:]:
-                    # 分割行数据（处理空格或制表符分隔）
-                    parts = line.strip().split()
-                    if len(parts) >= 4:
-                        stock_code = parts[1]
-                        limitup_count = parts[0]
-                        sector = parts[3]
-                        try:
-                            limitup_data[stock_code] = {
-                                'count': int(limitup_count),
-                                'sector': sector
-                            }
-                        except ValueError:
-                            continue
+            reader = StockLimitupCSVReader(csv_file)
+            stock_info_list = reader.get_stock_list()
+            
+            limitup_data = {}
+            for info in stock_info_list:
+                limitup_data[info.code] = {
+                    'count': info.limitup_count,
+                    'sector': info.sector
+                }
             
             print(f"成功加载 {len(limitup_data)} 只股票的涨停数据")
             self.limitup_data = limitup_data
@@ -113,19 +95,20 @@ class GoldenPitScanner:
             print(f"加载涨停数据失败: {str(e)}")
             return {}
     
-    def fetch_kline_data(self, stock_code: str, days: int = 180) -> List[Dict]:
+    def fetch_kline_data(self, stock_code: str, days: int = 180, end_date: str = None) -> List[Dict]:
         """
         获取股票K线数据
         
         Args:
             stock_code: 股票代码
             days: 获取天数
+            end_date: 结束日期，格式为"YYYY-MM-DD"
             
         Returns:
             K线数据列表
         """
         try:
-            kline_data = self.fetcher.fetch_kline_data(stock_code, days=days)
+            kline_data = self.fetcher.fetch_kline_data(stock_code, days=days, end_date=end_date)
             if kline_data:
                 return kline_data
             else:
@@ -170,13 +153,14 @@ class GoldenPitScanner:
         
         return df
     
-    def scan_golden_pit(self, stock_info: Dict, days: int = 180) -> Optional[Dict]:
+    def scan_golden_pit(self, stock_info: Dict, days: int = 180, end_date: str = None) -> Optional[Dict]:
         """
         扫描单个股票的黄金坑买点
         
         Args:
             stock_info: 股票信息
             days: 分析天数
+            end_date: 结束日期，格式为"YYYY-MM-DD"
             
         Returns:
             黄金坑分析结果
@@ -187,7 +171,7 @@ class GoldenPitScanner:
         print(f"正在分析: {stock_code} - {stock_name}")
         
         # 获取K线数据
-        kline_data = self.fetch_kline_data(stock_code, days=days)
+        kline_data = self.fetch_kline_data(stock_code, days=days, end_date=end_date)
         if not kline_data:
             return None
         
@@ -294,13 +278,14 @@ class GoldenPitScanner:
         
         return None
     
-    def batch_scan(self, days: int = 180, max_stocks: int = None) -> List[Dict]:
+    def batch_scan(self, days: int = 180, max_stocks: int = None, end_date: str = None) -> List[Dict]:
         """
         批量扫描股票
         
         Args:
             days: 分析天数
             max_stocks: 最大分析股票数
+            end_date: 结束日期，格式为"YYYY-MM-DD"
             
         Returns:
             黄金坑买点列表
@@ -317,12 +302,14 @@ class GoldenPitScanner:
             total_stocks = min(max_stocks, total_stocks)
         
         print(f"开始批量扫描 {total_stocks} 只股票...")
+        if end_date:
+            print(f"回测结束日期: {end_date}")
         
         for stock_info in self.stock_list[:total_stocks]:
             processed_count += 1
             print(f"\n[{processed_count}/{total_stocks}]")
             
-            result = self.scan_golden_pit(stock_info, days=days)
+            result = self.scan_golden_pit(stock_info, days=days, end_date=end_date)
             if result:
                 results.append(result)
                 print(f"✅ 发现黄金坑买点: {stock_info['code']} - {stock_info['name']}")
@@ -446,19 +433,41 @@ def main():
     parser.add_argument('--days', type=int, default=180, help='分析天数，默认180天')
     parser.add_argument('--max-stocks', type=int, default=None, help='最大分析股票数')
     parser.add_argument('--report', type=str, default=None, help='报告文件名')
+    parser.add_argument('--end-date', type=str, default=None, help='回测结束日期，格式为YYYY-MM-DD')
+    parser.add_argument('--stock', type=str, default=None, help='指定股票代码进行分析')
     
     args = parser.parse_args()
     
     scanner = GoldenPitScanner()
     
-    # 从涨停数据文件加载股票列表
-    scanner.load_stock_list(args.limitup)
+    # 如果指定了单个股票，直接创建股票信息
+    if args.stock:
+        # 构建股票代码（添加市场后缀）
+        stock_code = args.stock
+        if not (stock_code.endswith('.SZ') or stock_code.endswith('.SS')):
+            # 简单判断市场，00开头的为深交所，60开头的为上交所
+            if stock_code.startswith('00') or stock_code.startswith('30'):
+                stock_code += '.SZ'
+            elif stock_code.startswith('60'):
+                stock_code += '.SS'
+        
+        # 创建股票信息
+        stock_info = {
+            'code': stock_code,
+            'name': '未知',  # 暂时设为未知，后续可以通过API获取
+            'province': '未知'
+        }
+        scanner.stock_list = [stock_info]
+        print(f"已指定分析股票: {stock_code}")
+    else:
+        # 从涨停数据文件加载股票列表
+        scanner.load_stock_list(args.limitup)
     
     # 加载涨停数据
     scanner.load_limitup_data(args.limitup)
     
     # 批量扫描
-    results = scanner.batch_scan(days=args.days, max_stocks=args.max_stocks)
+    results = scanner.batch_scan(days=args.days, max_stocks=args.max_stocks, end_date=args.end_date)
     
     # 生成报告
     if results:
