@@ -31,7 +31,7 @@ jobs:
       - name: 安装依赖
         run: |
           pip install --upgrade pip
-          pip install requests
+          pip install requests python-dotenv
 
       - name: 创建必要目录
         run: |
