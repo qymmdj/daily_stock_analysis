@@ -1826,7 +1826,22 @@ class Config:
         Stock codes are canonicalized via normalize_stock_code so that
         runtime routing matches the same equivalence used in validation.
         """
-        from data_provider.base import normalize_stock_code
+        # 按需导入：data_provider 依赖 pandas 等重量级三方库，
+        # 未配置股票邮件组的环境（如轻量 CI）无需安装这些依赖
+        normalize_stock_code = None
+        if any(re.match(r'^STOCK_GROUP_\d+$', key, re.IGNORECASE)
+               for key in os.environ):
+            try:
+                from data_provider.base import normalize_stock_code
+            except ImportError as e:
+                logging.getLogger(__name__).warning(
+                    "data_provider 不可用（%s），股票邮件组代码不做规范化", e
+                )
+
+        def _normalize(code: str) -> str:
+            if normalize_stock_code is not None:
+                return normalize_stock_code(code)
+            return code
 
         groups: dict = {}
         stock_re = re.compile(r'^STOCK_GROUP_(\d+)$', re.IGNORECASE)
@@ -1837,7 +1852,7 @@ class Config:
                 idx = int(m.group(1))
                 val = os.environ[key].strip()
                 groups.setdefault(idx, {})['stocks'] = [
-                    normalize_stock_code(c.strip())
+                    _normalize(c.strip())
                     for c in val.split(',') if c.strip()
                 ]
             m = email_re.match(key)

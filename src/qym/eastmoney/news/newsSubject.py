@@ -37,6 +37,14 @@ import requests
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
+# Windows 控制台/管道默认 GBK，emoji 输出会触发 UnicodeEncodeError，强制 UTF-8
+for _stream in (sys.stdout, sys.stderr):
+    if _stream and _stream.encoding and _stream.encoding.lower().replace('-', '') != 'utf8':
+        try:
+            _stream.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
+
 # 添加项目根目录到路径（src/qym/eastmoney/news -> 项目根需向上 4 级）
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 sys.path.insert(0, _PROJECT_ROOT)
