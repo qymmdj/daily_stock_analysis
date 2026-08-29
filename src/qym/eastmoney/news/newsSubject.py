@@ -706,13 +706,20 @@ def analyze_news(news_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     result_list = []
     total_batches = (len(news_list) + LLM_BATCH_SIZE - 1) // LLM_BATCH_SIZE
+    llm_broken = False  # 熔断：一批失败后跳过后续所有批的模型分析
     for batch_idx in range(total_batches):
         batch = news_list[batch_idx * LLM_BATCH_SIZE:(batch_idx + 1) * LLM_BATCH_SIZE]
-        print(f"🤖 LLM 分析第 {batch_idx + 1}/{total_batches} 批（{len(batch)} 条）...")
-        try:
-            result_map = analyzer.analyze_batch(batch)
-        except Exception as e:
-            print(f"⚠️ 本批分析失败: {e}，本批消息标记为未分析")
+
+        if not llm_broken:
+            print(f"🤖 LLM 分析第 {batch_idx + 1}/{total_batches} 批（{len(batch)} 条）...")
+            try:
+                result_map = analyzer.analyze_batch(batch)
+            except Exception as e:
+                print(f"⚠️ LLM 调用不通: {str(e)[:120]}")
+                print("⏭️ 跳过模型分析，后续消息不再调用 LLM")
+                result_map = {}
+                llm_broken = True
+        else:
             result_map = {}
 
         for i, news in enumerate(batch):
