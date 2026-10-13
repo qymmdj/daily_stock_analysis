@@ -6,7 +6,7 @@
 ===================================
 
 功能：
-1. 从 Gitee limitup 目录查询最近一次采集时间
+1. 从 Gitee limitup 目录查询最近一次采集时间（补采范围最多 15 天）
 2. 从选股宝接口获取每日历史涨停数据
 3. 将响应报文转换成中文字段描述的JSON格式
 4. 每日采集完成后 zip 压缩并上传到 Gitee limitup 目录，格式：年月日.zip（如 20260203.zip），压缩包内文件名为年月日.json
@@ -35,7 +35,8 @@ except ImportError:
 # 配置项
 API_BASE_URL = "http://flash-api.xuangubao.cn/api/pool/detail"
 LIMITUP_REMOTE = "limitup"
-DEFAULT_START_DATE = datetime(2022, 1, 1)
+# 单次运行最多补采的天数（含当天），避免一次拉取过多导致运行时间过长
+MAX_BACKFILL_DAYS = 15
 FILENAME_PATTERN = re.compile(r"^(\d{8})\.zip$")
 
 # 英文字段到中文字段的映射
@@ -233,19 +234,26 @@ def get_latest_collection_date(client: GiteeClient) -> datetime | None:
 
 def determine_collection_range(client: GiteeClient) -> tuple[datetime, datetime]:
     """
-    确定采集的日期范围
+    确定采集的日期范围：从最近采集日期的次日开始，最多补采最近 MAX_BACKFILL_DAYS 天
 
     Returns:
         (start_date, end_date)：均为 datetime，含首尾
     """
     end_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    earliest_allowed = end_date - timedelta(days=MAX_BACKFILL_DAYS - 1)
+
     latest = get_latest_collection_date(client)
     if latest is None:
-        start_date = DEFAULT_START_DATE
+        start_date = earliest_allowed
         print(f"limitup 目录无历史数据，从 {start_date.strftime('%Y-%m-%d')} 开始采集")
     else:
         start_date = latest + timedelta(days=1)
         print(f"最近采集日期: {latest.strftime('%Y-%m-%d')}，从 {start_date.strftime('%Y-%m-%d')} 开始采集")
+
+    if start_date < earliest_allowed:
+        start_date = earliest_allowed
+        print(f"补采范围限制为最近 {MAX_BACKFILL_DAYS} 天，起点调整为 {start_date.strftime('%Y-%m-%d')}")
+
     return start_date, end_date
 
 
@@ -289,7 +297,7 @@ def collect_and_upload_single_day(
             zf.writestr(inner_json_name, json_bytes)
 
         remote_path = f"{LIMITUP_REMOTE}/{remote_filename}"
-        success = client.upload_binary_file(temp_path, remote_path, message=f"涨停数据 {date_str}")
+        success = client.upload_binary_file(temp_path, remote_path, message=f"涨停数据 {date_str}", create_only=True)
         return success
     finally:
         if temp_path:
@@ -341,7 +349,7 @@ def main():
     # 支持命令行指定单日模式（兼容旧用法）
     if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
         print("用法: python limit_up.py [日期]")
-        print("  无参数: 从 Gitee 查询最近采集时间，增量采集并上传")
+        print(f"  无参数: 从 Gitee 查询最近采集时间，增量采集并上传（最多补采最近 {MAX_BACKFILL_DAYS} 天）")
         print("  日期: 仅采集指定日期并输出 JSON，格式 YYYY-MM-DD")
         return 0
 

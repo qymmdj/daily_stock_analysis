@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [修复] 统一持仓快照输出现价/市值/浮盈亏/收益率与价格元信息，并为 LLM 渠道测试补充结构化诊断与设置页排障提示。
 - [文档] 补充 LLM 渠道编辑器的官方来源、依赖兼容窗口、保存时的运行时模型清理规则，以及旧配置回退路径说明。
 - [测试] 补齐 task_queue 运行时配置同步回归证据，明确 `tests/test_task_queue_config_sync.py` 作为本轮验收项。
+- [新功能] 新增涨停关联分析 CLI：`--build-correlation` 构建历史联动统计，`--related` 挖掘涨停股的强关联跟风股，`--attribute` 归因涨停原因（需配置 `CORRELATION_DB_PATH`，详见 docs/涨停关联分析.md）。
+- [改进] 涨停关联统计支持次日跟风模式：候选跟风股扩展为"首板日热门 ∪ 次日热门"，新增 B次日跟风次数 字段，输出含次日跟风分布。
+- [修复] 涨停归因"板块带动"判定：同板块仅 1 家更早封板但为 ≥2 连板龙头时也构成有效带动（原 >=2 家门槛导致被误判为独立行情）。
+- [改进] 涨停关联统计产出表（stock_pair_stats / stock_rise_attribution）改为与源表同库写入，移除独立统计库与本地快照缓存（CORRELATION_STATS_DB_PATH / CORRELATION_CACHE_DB_PATH 配置项已废弃）。
+- [改进] 选股通每日涨停采集限定单次补采为最近 15 天，并复用 Gitee 连接、跳过新建文件的 SHA 查询，缩短任务运行时间。
 
 ## [3.14.2] - 2026-04-30
 

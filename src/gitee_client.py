@@ -34,6 +34,8 @@ class GiteeClient:
         self.token = token or os.getenv("GITEE_TOKEN", "862a28ae7934e3e9963b5d4f76a07013")
         self.repo = repo or os.getenv("GITEE_REPO", "qymmdj/stockdb")
         self.base_url = "https://gitee.com/api/v5"
+        # 复用底层连接，避免每次请求都重新进行 TLS 握手
+        self.session = requests.Session()
 
     def upload_file(self, file_path: str, remote_path: str, branch: str = "master", message: str = None) -> bool:
         """
@@ -74,7 +76,7 @@ class GiteeClient:
             
             # 首先尝试获取文件信息，如果存在则获取SHA值用于更新
             file_info_url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}?access_token={self.token}&ref={branch}"
-            file_response = requests.get(file_info_url)
+            file_response = self.session.get(file_info_url, timeout=30)
                         
             # 根据文件是否存在决定使用哪种方法
             if file_response.status_code == 200:
@@ -95,13 +97,13 @@ class GiteeClient:
                 if sha:
                     data['sha'] = sha
                     # 使用PUT请求更新现有文件
-                    response = requests.put(upload_url, json=data, headers=headers, timeout=60)
+                    response = self.session.put(upload_url, json=data, headers=headers, timeout=60)
                 else:
                     # 如果没有获取到SHA但文件响应是200，可能有其他情况，使用POST创建
-                    response = requests.post(upload_url, json=data, headers=headers, timeout=60)
+                    response = self.session.post(upload_url, json=data, headers=headers, timeout=60)
             else:
                 # 文件不存在，使用POST创建新文件
-                response = requests.post(upload_url, json=data, headers=headers, timeout=60)
+                response = self.session.post(upload_url, json=data, headers=headers, timeout=60)
             
             # 打印详细的响应信息以便调试
             print(f"📡 Gitee API 响应状态码: {response.status_code}")
@@ -173,7 +175,7 @@ class GiteeClient:
             
             # 首先尝试获取文件信息，如果存在则获取SHA值用于更新
             file_info_url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}?access_token={self.token}&ref={branch}"
-            file_response = requests.get(file_info_url)
+            file_response = self.session.get(file_info_url, timeout=30)
                         
             # 根据文件是否存在决定使用哪种方法
             if file_response.status_code == 200:
@@ -194,13 +196,13 @@ class GiteeClient:
                 if sha:
                     data['sha'] = sha
                     # 使用PUT请求更新现有文件
-                    response = requests.put(upload_url, json=data, headers=headers, timeout=60)
+                    response = self.session.put(upload_url, json=data, headers=headers, timeout=60)
                 else:
                     # 如果没有获取到SHA但文件响应是200，可能有其他情况，使用POST创建
-                    response = requests.post(upload_url, json=data, headers=headers, timeout=60)
+                    response = self.session.post(upload_url, json=data, headers=headers, timeout=60)
             else:
                 # 文件不存在，使用POST创建新文件
-                response = requests.post(upload_url, json=data, headers=headers, timeout=60)
+                response = self.session.post(upload_url, json=data, headers=headers, timeout=60)
             
             # 打印详细的响应信息以便调试
             print(f"📡 Gitee API 响应状态码: {response.status_code}")
@@ -247,7 +249,7 @@ class GiteeClient:
         """
         try:
             url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}?access_token={self.token}&ref={branch}"
-            response = requests.get(url, timeout=30)
+            response = self.session.get(url, timeout=30)
             if response.status_code == 404:
                 return []
             if response.status_code != 200:
@@ -260,7 +262,7 @@ class GiteeClient:
             print(f"列出目录失败: {e}")
             return []
 
-    def upload_binary_file(self, file_path: str, remote_path: str, branch: str = "master", message: str = None) -> bool:
+    def upload_binary_file(self, file_path: str, remote_path: str, branch: str = "master", message: str = None, create_only: bool = False) -> bool:
         """
         上传二进制文件到 Gitee 仓库（如 gzip 压缩文件）
 
@@ -269,6 +271,8 @@ class GiteeClient:
             remote_path: 远程文件路径（相对于仓库根目录）
             branch: 分支名称
             message: 提交消息
+            create_only: 明确用于新建文件时置 True，可跳过"查询文件 SHA"的额外请求直接创建。
+                         仅在能确定远程文件不存在时使用
 
         Returns:
             bool: 上传是否成功
@@ -290,26 +294,29 @@ class GiteeClient:
             }
             headers = {"Content-Type": "application/json"}
 
-            file_info_url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}?access_token={self.token}&ref={branch}"
-            file_response = requests.get(file_info_url)
-
-            if file_response.status_code == 200:
-                file_info_response = file_response.json()
-                sha = ""
-                if isinstance(file_info_response, dict):
-                    sha = file_info_response.get("sha", "")
-                elif isinstance(file_info_response, list) and len(file_info_response) > 0:
-                    for item in file_info_response:
-                        if item.get("name") == os.path.basename(remote_path):
-                            sha = item.get("sha", "")
-                            break
-                if sha:
-                    data["sha"] = sha
-                    response = requests.put(upload_url, json=data, headers=headers, timeout=60)
-                else:
-                    response = requests.post(upload_url, json=data, headers=headers, timeout=60)
+            if create_only:
+                response = self.session.post(upload_url, json=data, headers=headers, timeout=60)
             else:
-                response = requests.post(upload_url, json=data, headers=headers, timeout=60)
+                file_info_url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}?access_token={self.token}&ref={branch}"
+                file_response = self.session.get(file_info_url, timeout=30)
+
+                if file_response.status_code == 200:
+                    file_info_response = file_response.json()
+                    sha = ""
+                    if isinstance(file_info_response, dict):
+                        sha = file_info_response.get("sha", "")
+                    elif isinstance(file_info_response, list) and len(file_info_response) > 0:
+                        for item in file_info_response:
+                            if item.get("name") == os.path.basename(remote_path):
+                                sha = item.get("sha", "")
+                                break
+                    if sha:
+                        data["sha"] = sha
+                        response = self.session.put(upload_url, json=data, headers=headers, timeout=60)
+                    else:
+                        response = self.session.post(upload_url, json=data, headers=headers, timeout=60)
+                else:
+                    response = self.session.post(upload_url, json=data, headers=headers, timeout=60)
 
             if response.status_code in [200, 201]:
                 print(f"文件已上传到Gitee: {self.repo}/{remote_path}")
@@ -338,7 +345,7 @@ class GiteeClient:
         """
         try:
             url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}?access_token={self.token}&ref={branch}"
-            response = requests.get(url, timeout=30)
+            response = self.session.get(url, timeout=30)
 
             return response.status_code == 200
         except Exception:
@@ -363,7 +370,7 @@ class GiteeClient:
 
             if not sha:
                 file_info_url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}?access_token={self.token}&ref={branch}"
-                response = requests.get(file_info_url, timeout=30)
+                response = self.session.get(file_info_url, timeout=30)
                 if response.status_code != 200:
                     print(f"删除失败，文件不存在: {remote_path}")
                     return False
@@ -377,7 +384,7 @@ class GiteeClient:
                 "branch": branch,
             }
             headers = {"Content-Type": "application/json"}
-            response = requests.delete(url, json=data, headers=headers, timeout=30)
+            response = self.session.delete(url, json=data, headers=headers, timeout=30)
 
             if response.status_code in [200, 204]:
                 print(f"文件已从Gitee删除: {self.repo}/{remote_path}")
@@ -401,7 +408,7 @@ class GiteeClient:
         """
         try:
             url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}?access_token={self.token}&ref={branch}"
-            response = requests.get(url, timeout=30)
+            response = self.session.get(url, timeout=30)
                 
             if response.status_code == 200:
                 data = response.json()
@@ -432,7 +439,7 @@ class GiteeClient:
                 self.repo = repo
                 
             url = f"{self.base_url}/repos/{self.repo}/contents/{remote_path}?access_token={self.token}&ref={branch}"
-            response = requests.get(url, timeout=30)
+            response = self.session.get(url, timeout=30)
                 
             # 恢复原来的仓库设置
             self.repo = original_repo

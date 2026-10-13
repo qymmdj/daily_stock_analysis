@@ -357,6 +357,34 @@ def parse_arguments() -> argparse.Namespace:
         help='强制回测（即使已有回测结果也重新计算）'
     )
 
+    # === 涨停关联分析 ===
+    parser.add_argument(
+        '--related',
+        type=str,
+        default=None,
+        help='分析指定涨停股的历史强关联跟风股（需配置 CORRELATION_DB_PATH）'
+    )
+
+    parser.add_argument(
+        '--attribute',
+        type=str,
+        default=None,
+        help='归因指定涨停股的上涨原因（谁带动了它，需配置 CORRELATION_DB_PATH）'
+    )
+
+    parser.add_argument(
+        '--build-correlation',
+        action='store_true',
+        help='构建/刷新涨停关联统计（stock_pair_stats，首次使用前运行一次）'
+    )
+
+    parser.add_argument(
+        '--correlation-date',
+        type=str,
+        default=None,
+        help='涨停关联分析的指定日期（YYYY-MM-DD，默认取该股最近涨停日）'
+    )
+
     return parser.parse_args()
 
 
@@ -703,6 +731,75 @@ def _build_schedule_time_provider(default_schedule_time: str):
     return _provider
 
 
+def _format_related_result(result: dict) -> str:
+    """格式化 --related 输出"""
+    if result.get('error'):
+        return f"[错误] {result['error']}"
+    lines = [
+        "=" * 60,
+        f"涨停股关联分析: {result.get('name') or ''}({result['code']}) {result['date']}",
+        f"首板时间: {result.get('first_limit_time') or '-'}  "
+        f"板块: {result.get('sector') or '-'}（当日板块涨停 {result.get('sector_limit_up_count', 0)} 家）",
+        f"涨停原因: {result.get('reason') or '-'}",
+        "-" * 60,
+    ]
+    related = result.get('related') or []
+    if not related:
+        lines.append("无满足门槛的历史强关联跟风股（样本数>=8 且 lift>=1.4）。")
+        lines.append(f"提示: {result.get('stats_note', '')}")
+    else:
+        lines.append(f"历史强关联跟风股 TOP {len(related)}（按 lift 排序）:")
+        lines.append(f"{'股票':<14}{'通道':<8}{'样本':>4}{'次日跟风':>8}{'延续率':>8}{'lift':>7}{'延续均幅':>9}  当日状态")
+        for r in related:
+            name = f"{r['name'] or r['code']}"
+            nf = f"{r.get('next_follow_count') or 0:>3}次"
+            win = f"{r['t1_persist_rate'] * 100:.0f}%" if r['t1_persist_rate'] is not None else '-'
+            lift = f"{r['lift']:.2f}" if r['lift'] is not None else '-'
+            avg = f"{r['t1_avg_pct'] * 100:+.1f}%" if r['t1_avg_pct'] is not None else '-'
+            lines.append(
+                f"{name:<14}{r['channel']:<8}{r['samples']:>4}{nf:>8}{win:>8}{lift:>7}{avg:>9}  {r['today_status']}"
+            )
+        lines.append(f"\n口径说明: {result.get('stats_note', '')}")
+
+    observation = result.get('observation') or []
+    if observation:
+        if related:
+            lines.append("")
+        lines.append(f"低样本观察（历史联动 < 8 次，置信度不足，仅供人工参考）TOP {len(observation)}:")
+        lines.append(f"{'股票':<14}{'通道':<8}{'样本':>4}{'次日跟风':>8}{'延续率':>8}{'lift':>7}{'跟风日均幅':>9}  当日状态")
+        for r in observation:
+            name = f"{r['name'] or r['code']}"
+            nf = f"{r.get('next_follow_count') or 0:>3}次"
+            win = f"{r['t1_persist_rate'] * 100:.0f}%" if r['t1_persist_rate'] is not None else '-'
+            lift = f"{r['lift']:.2f}" if r['lift'] is not None else '-'
+            avg = f"{r['t0_avg_pct'] * 100:+.1f}%" if r['t0_avg_pct'] is not None else '-'
+            lines.append(
+                f"{name:<14}{r['channel']:<8}{r['samples']:>4}{nf:>8}{win:>8}{lift:>7}{avg:>9}  {r['today_status']}"
+            )
+    lines.append("=" * 60)
+    return "\n".join(lines)
+
+
+def _format_attribution_result(result: dict) -> str:
+    """格式化 --attribute 输出"""
+    if result.get('error'):
+        return f"[错误] {result['error']}"
+    lines = [
+        "=" * 60,
+        f"涨停归因分析: {result.get('name') or ''}({result['code']}) {result['date']}",
+        f"首板时间: {result.get('first_limit_time') or '-'}  "
+        f"板块: {result.get('sector') or '-'}  连板数: {result.get('boards') or 1}",
+        "-" * 60,
+        f"归因类型: {result.get('type')}",
+    ]
+    if result.get('target_name'):
+        lines.append(f"归因对象: {result['target_name']}({result.get('target')})")
+    lines.append(f"归因描述: {result.get('description')}")
+    lines.append(f"置信度:   {result.get('confidence')}")
+    lines.append("=" * 60)
+    return "\n".join(lines)
+
+
 def main() -> int:
     """
     主入口函数
@@ -817,6 +914,44 @@ def main() -> int:
                 f"回测完成: processed={stats.get('processed')} saved={stats.get('saved')} "
                 f"completed={stats.get('completed')} insufficient={stats.get('insufficient')} errors={stats.get('errors')}"
             )
+            return 0
+
+        # 模式0.5: 涨停关联分析
+        if getattr(args, 'build_correlation', False) or getattr(args, 'related', None) or getattr(args, 'attribute', None):
+            correlation_db = getattr(config, 'correlation_db_path', '') or ''
+            if not correlation_db:
+                logger.error("未配置 CORRELATION_DB_PATH，请在 .env 中指向涨停数据库（stockDb.db3）后重试")
+                return 1
+            try:
+                from src.services.correlation_service import CorrelationService
+            except ImportError as e:
+                logger.error(f"涨停关联分析模块加载失败: {e}")
+                return 1
+
+            service = CorrelationService(correlation_db)
+            corr_date = getattr(args, 'correlation_date', None)
+
+            if getattr(args, 'build_correlation', False):
+                logger.info("模式: 构建涨停关联统计")
+                stats = service.build_stats()
+                logger.info(
+                    f"构建完成: 覆盖天数={stats.get('days')} 龙头首板数={stats.get('leaders')} "
+                    f"关联对={stats.get('pairs')}"
+                )
+                if not getattr(args, 'related', None) and not getattr(args, 'attribute', None):
+                    return 0
+
+            if getattr(args, 'related', None):
+                result = service.find_related(args.related, corr_date)
+                print(_format_related_result(result))
+                if result.get('error'):
+                    return 1
+
+            if getattr(args, 'attribute', None):
+                result = service.attribute(args.attribute, corr_date)
+                print(_format_attribution_result(result))
+                if result.get('error'):
+                    return 1
             return 0
 
         # 模式1: 仅大盘复盘
